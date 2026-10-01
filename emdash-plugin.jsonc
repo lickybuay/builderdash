@@ -1,0 +1,14 @@
+{
+	"$schema": "./node_modules/@emdash-cms/plugin-cli/schemas/emdash-plugin.schema.json",
+	"slug": "builderdash",
+	"name": "Builderdash",
+	"description": "A visual page builder board for EmDash content.",
+	"version": "0.1.0",
+	"license": "MIT",
+	"author": { "name": "Builderdash" },
+	"security": { "email": "security@example.com" },
+	"keywords": ["builder", "layout", "blocks"],
+	"capabilities": ["content:read"],
+	"allowedHosts": [],
+	"storage": {}
+}
