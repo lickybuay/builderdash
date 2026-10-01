@@ -27,7 +27,7 @@ The `prepare` script builds `dist/` on install.
 // astro.config.mjs
 import react from "@astrojs/react";
 import emdash from "emdash/astro";
-import { builderdashPlugin } from "@emdash/builderdash";
+import { builderdashPlugin } from "@lickybuay/builderdash";
 
 export default defineConfig({
 	integrations: [
@@ -99,9 +99,9 @@ In the admin, open the content list of the collection: each entry gets an **Edit
 This package lives in a pnpm workspace together with a demo EmDash site. See the [repository README](../README.md).
 
 ```bash
-pnpm --filter @emdash/builderdash typecheck
-pnpm --filter @emdash/builderdash test
-pnpm --filter @emdash/builderdash build
+pnpm --filter @lickybuay/builderdash typecheck
+pnpm --filter @lickybuay/builderdash test
+pnpm --filter @lickybuay/builderdash build
 ```
 
 ## License

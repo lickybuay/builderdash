@@ -32,8 +32,8 @@ export function builderdashPlugin(
 		id: PLUGIN_ID,
 		version: PLUGIN_VERSION,
 		format: "native",
-		entrypoint: "@emdash/builderdash",
-		adminEntry: "@emdash/builderdash/admin",
+		entrypoint: "@lickybuay/builderdash",
+		adminEntry: "@lickybuay/builderdash/admin",
 		options,
 	};
 }
@@ -47,7 +47,7 @@ export function createPlugin(options: BuilderdashOptions = {}) {
 		version: PLUGIN_VERSION,
 		capabilities: ["content:read"],
 		admin: {
-			entry: "@emdash/builderdash/admin",
+			entry: "@lickybuay/builderdash/admin",
 			pages: [{ path: "/builder", label: "Builder", icon: "note-pencil" }],
 		},
 	});
