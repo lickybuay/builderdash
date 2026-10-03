@@ -1,0 +1,62 @@
+---
+/**
+ * Renders ONE content block for the page builder's live preview.
+ *
+ * The builder edits a block's fields (a hero's headline…) without saving, then
+ * POSTs the edited block here and swaps the returned HTML into the preview, so
+ * the block is drawn by the site's own component, exactly as it will publish.
+ *
+ * - `partial`: returns the fragment only, no <html>/<head> and no layout.
+ * - Signed-in editors only, same origin only, never cached.
+ * - The block is validated: a known block type and plain field values only.
+ *   Nothing is stored.
+ */
+
+// The component that renders the entry's `content` blocks (`value={[block]}`).
+import Blocks from "../components/MarketingBlocks.astro"; // builderdash:blocks-import
+
+export const partial = true;
+export const prerender = false;
+
+// Block types this route may render: the `content` field's allowedTypes.
+const BLOCK_TYPES = new Set(["marketing_hero"]); // builderdash:block-types
+const FIELD_NAME = /^[a-z_][a-z0-9_]*$/;
+
+const deny = (status: number, message: string) =>
+	new Response(message, { status, headers: { "Cache-Control": "no-store" } });
+
+let block: Record<string, unknown> | null = null;
+let failure: Response | null = null;
+
+if (Astro.request.method !== "POST") {
+	failure = deny(405, "Method not allowed");
+} else if (!Astro.locals.user) {
+	failure = deny(401, "Sign in required");
+} else if (Astro.request.headers.get("origin") !== Astro.url.origin) {
+	failure = deny(403, "Cross-origin request");
+} else {
+	try {
+		const body = (await Astro.request.json()) as { block?: unknown };
+		const candidate = body?.block;
+		if (
+			candidate &&
+			typeof candidate === "object" &&
+			!Array.isArray(candidate) &&
+			typeof (candidate as Record<string, unknown>)._type === "string" &&
+			BLOCK_TYPES.has((candidate as Record<string, unknown>)._type as string) &&
+			Object.keys(candidate).every((key) => key.startsWith("_") || FIELD_NAME.test(key))
+		) {
+			block = candidate as Record<string, unknown>;
+		} else {
+			failure = deny(400, "Invalid block");
+		}
+	} catch {
+		failure = deny(400, "Invalid JSON");
+	}
+}
+
+if (failure) return failure;
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<Blocks value={[block as any]} />

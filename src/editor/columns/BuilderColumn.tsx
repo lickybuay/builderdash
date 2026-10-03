@@ -6,7 +6,7 @@
  * renders one button per row. It links to the plugin's builder page with the
  * entry reference in the query string, which is what `BuilderPage` reads.
  *
- * See `.agents/docs/builderdash/04-guia-visual.md` for the visual rules.
+ * See `docs/04-visual-guide.md` for the visual rules.
  */
 
 import * as React from "react";
@@ -17,6 +17,7 @@ import type {
 import { useLingui } from "@lingui/react";
 
 import { PLUGIN_ID } from "../../plugin-id";
+import { useBuilderAvailability } from "../useBuilderAvailability";
 
 /**
  * Builds the URL of the builder page for one entry.
@@ -31,6 +32,13 @@ export function builderUrl(collection: string, entryId: string): string {
 
 function BuilderCell({ item, collection }: ContentListColumnCellContext): React.JSX.Element {
 	const { i18n } = useLingui();
+	// Before any early return: the hook count must not change with the row.
+	const availability = useBuilderAvailability(collection);
+
+	// The column shows on every collection; only buildable ones get a button.
+	if (availability === "unavailable") return <span />;
+	if (availability === "loading") return <span className="text-xs text-kumo-subtle">…</span>;
+	if (availability === "error") return <span className="text-xs text-kumo-subtle">—</span>;
 
 	// A trashed entry has no builder page: it is not editable from here.
 	if (item.status === "trashed") return <span className="text-xs text-kumo-subtle">—</span>;
@@ -52,11 +60,8 @@ export const contentListColumns: readonly ContentListColumnExtension[] = [
 		id: "builderdash",
 		label: "Builder",
 		cell: BuilderCell,
-		/**
-		 * Only pages are composable with the builder. Narrow this if another
-		 * collection ever gets a `builder_layout` field the builder understands.
-		 */
-		collections: ["pages"],
+		// No `collections` filter: it is synchronous and cannot read the schema.
+		// The cell decides per collection (see `useBuilderAvailability`).
 		// Sort after the host columns so it reads as an action, not as data.
 		order: 100,
 		align: "start",

@@ -16,8 +16,9 @@ import { PLUGIN_ID, PLUGIN_VERSION } from "./plugin-id";
 
 export interface BuilderdashOptions {
 	/**
-	 * Collection the builder page edits. Defaults to `pages`, which is the
-	 * collection the marketing template ships with.
+	 * @deprecated Ignored. The schema decides where the builder is available:
+	 * any collection that declares the `builder_layout` field. Kept so existing
+	 * `builderdashPlugin({ collection: "pages" })` calls still type-check.
 	 */
 	collection?: string;
 }
@@ -48,7 +49,9 @@ export function createPlugin(options: BuilderdashOptions = {}) {
 		capabilities: ["content:read"],
 		admin: {
 			entry: "@lickybuay/builderdash/admin",
-			pages: [{ path: "/builder", label: "Builder", icon: "note-pencil" }],
+			// No `pages` entry: the builder edits one entry at a time and is opened
+			// from the content list ("Edit with BuilderDash"), so it has no place
+			// in the sidebar. The route comes from the admin module's `pages` map.
 		},
 	});
 }

@@ -62,7 +62,8 @@ import { resolveTreeDrop, zoneFromPointer, type TreeDropZone } from "./tree-drop
 
 /** What is being dragged. */
 export type DragPayload =
-	| { kind: "new"; nodeType: NodeType }
+	/** `blockType`: a new content block of that type, placed by a content ref. */
+	| { kind: "new"; nodeType: NodeType; blockType?: string }
 	| { kind: "existing"; nodeKey: string };
 
 /** Resolved insertion target: a container and a slot inside it. */
@@ -137,6 +138,29 @@ class DragStore {
 }
 
 const store = new DragStore();
+
+/** The payload being dragged right now, if any. */
+export function currentDragPayload(): DragPayload | null {
+	return store.getSnapshot().payload;
+}
+
+/** Starts a drag from a source that is not a React element (the live preview). */
+export function beginDrag(payload: DragPayload): void {
+	store.begin(payload);
+}
+
+/** Ends the current drag and clears every indicator. */
+export function endDrag(): void {
+	store.end();
+}
+
+/** Publishes the live preview's drop target, which clears the panel's. */
+export function setFrameTarget(target: DropTarget | null): void {
+	store.setActive(target ? (target.parentKey ?? "root") : null, target?.index ?? 0);
+}
+
+export { attachFrameDrop } from "./frame-drop";
+export type { FrameDropLine } from "./frame-drop";
 
 /** Test seam: resets the singleton between cases. */
 export function resetDragStore(): void {

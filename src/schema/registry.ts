@@ -18,9 +18,9 @@ export const WIDGETS: readonly WidgetDefinition[] = [
 		icon: "rows",
 		category: "Structure",
 		container: true,
-		// A container holds containers. That is the whole structure at this
-		// stage: nesting is what proves the tree, the drag and the render work.
-		accepts: ["container"],
+		// Containers nest, and can hold the page's existing content blocks,
+		// all basic widgets, and template references.
+		accepts: ["container", "content_ref", "template_ref", "heading", "text", "image", "button", "divider"],
 		topLevel: true,
 		fields: [
 			{
@@ -37,6 +37,138 @@ export const WIDGETS: readonly WidgetDefinition[] = [
 				options: ["column", "row"],
 				default: "column",
 			},
+			{
+				slug: "background_color",
+				label: "Background",
+				type: "color",
+			},
+		],
+	},
+	{
+		type: "heading",
+		label: "Heading",
+		icon: "heading",
+		category: "Basic",
+		topLevel: true,
+		fields: [
+			{ slug: "text", label: "Text", type: "string", required: true },
+			{
+				slug: "level",
+				label: "Level",
+				type: "select",
+				options: ["h1", "h2", "h3", "h4", "h5", "h6"],
+				default: "h2",
+			},
+		],
+	},
+	{
+		type: "text",
+		label: "Text",
+		icon: "text-aa",
+		category: "Basic",
+		topLevel: true,
+		fields: [
+			{ slug: "content", label: "Content", type: "text", required: true },
+		],
+	},
+	{
+		type: "image",
+		label: "Image",
+		icon: "image",
+		category: "Basic",
+		topLevel: true,
+		fields: [
+			{ slug: "image", label: "Image", type: "image", default: {} },
+			{ slug: "alt", label: "Alt text", type: "string" },
+			{
+				slug: "width",
+				label: "Width",
+				type: "select",
+				options: ["auto", "full", "half", "third"],
+				default: "auto",
+			},
+			{
+				slug: "height",
+				label: "Height",
+				type: "select",
+				options: ["auto", "short", "medium", "tall"],
+				default: "auto",
+			},
+			{
+				slug: "object_fit",
+				label: "Object fit",
+				type: "select",
+				options: ["cover", "contain", "fill"],
+				default: "cover",
+			},
+		],
+	},
+	{
+		type: "button",
+		label: "Button",
+		icon: "arrow-right",
+		category: "Basic",
+		topLevel: true,
+		fields: [
+			{ slug: "label", label: "Label", type: "string", required: true },
+			{ slug: "url", label: "URL", type: "url", default: "#" },
+		],
+	},
+	{
+		type: "divider",
+		label: "Divider",
+		icon: "minus",
+		category: "Basic",
+		topLevel: true,
+		fields: [
+			{
+				slug: "color",
+				label: "Color",
+				type: "select",
+				options: ["default", "brand", "accent", "muted", "clear"],
+				default: "default",
+			},
+			{
+				slug: "thickness",
+				label: "Thickness",
+				type: "select",
+				options: ["sm", "md", "lg"],
+				default: "md",
+			},
+			{
+				slug: "style",
+				label: "Style",
+				type: "select",
+				options: ["solid", "dashed", "dotted"],
+				default: "solid",
+			},
+		],
+	},
+	{
+		// A block that already lives in the entry's `content` field (a hero, an
+		// FAQ…). The builder places it; its text is edited in the EmDash editor.
+		type: "content_ref",
+		label: "Content block",
+		icon: "squares-four",
+		category: "Content",
+		topLevel: true,
+		internal: true,
+		fields: [{ slug: "ref_key", label: "Content block", type: "string", required: true }],
+	},
+	{
+		// A reference to a reusable template from the Templates collection.
+		// Expands into its child nodes when inserted into the canvas.
+		type: "template_ref",
+		label: "Template",
+		icon: "squares",
+		category: "Content",
+		topLevel: true,
+		container: true,
+		accepts: ["container", "heading", "text", "image", "button", "divider"],
+		fields: [
+			{ slug: "ref_id", label: "Template ID", type: "string", required: true },
+			{ slug: "css_id", label: "CSS ID", type: "string" },
+			{ slug: "css_classes", label: "CSS Classes", type: "string" },
 		],
 	},
 ];
@@ -80,7 +212,12 @@ export function defaultProps(type: NodeType): Record<string, unknown> {
 	if (!widget) return {};
 	const props: Record<string, unknown> = {};
 	for (const field of widget.fields) {
-		if (field.default !== undefined) props[field.slug] = field.default;
+		if (field.default !== undefined) {
+			props[field.slug] = field.default;
+		} else if (field.required && (field.type === "string" || field.type === "text")) {
+			// Required text fields get their label as a visible placeholder.
+			props[field.slug] = field.label ?? field.slug;
+		}
 	}
 	return props;
 }
@@ -106,8 +243,13 @@ export function widgetsByCategory(): Array<{
 }> {
 	return WIDGET_CATEGORIES.map((category) => ({
 		category,
-		widgets: WIDGETS.filter((widget) => widget.category === category),
+		widgets: WIDGETS.filter((widget) => widget.category === category && !widget.internal),
 	})).filter((group) => group.widgets.length > 0);
+}
+
+/** Every node type the registry knows, used to accept stored blocks. */
+export function knownTypes(): NodeType[] {
+	return WIDGETS.map((widget) => widget.type);
 }
 
 /** `true` when `childType` may live inside `parentType`. */

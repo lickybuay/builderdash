@@ -6,13 +6,13 @@
  *
  * `_key` links both layers. The hierarchy is rebuilt with the declared `parent_key` field.
  *
- * See `.agents/docs/builderdash/02-contrato-datos.md`.
+ * See `docs/02-data-contract.md`.
  *
  * These functions are pure and depend on neither React nor the DOM: they are
  * the only part of milestone 1 that can be validated without a screen.
  */
 
-import { requireWidget, blockTypeFor, PARENT_FIELD } from "../../schema/registry";
+import { blockTypeFor, knownTypes, PARENT_FIELD, requireWidget } from "../../schema/registry";
 import type { NodeType } from "../../schema/types";
 import type { BuilderNode, BuilderTree, StyleByBreakpoint } from "./tree";
 
@@ -33,6 +33,18 @@ export interface StoredBlock extends Record<string, unknown> {
 
 /** Layer 2: styles indexed by `_key`. */
 export type StoredStyles = Record<string, StyleByBreakpoint>;
+
+/**
+ * Reserved key in layer 2 for editor names (`{ [nodeKey]: name }`).
+ *
+ * Names are editor metadata, not content: they live in the builder's own json
+ * field so renaming never needs a block type change. Generated node keys are
+ * alphanumeric, so `__names` never collides with a node.
+ */
+export const NAMES_KEY = "__names";
+
+/** Reserved key in layer 2 for the page's custom CSS (a string). */
+export const CSS_KEY = "__css";
 
 export interface SerializedEntry {
 	blocks: StoredBlock[];
@@ -56,9 +68,11 @@ export interface SerializedEntry {
 export function serializeTree(
 	tree: BuilderTree,
 	orphanStyles: StoredStyles = {},
+	pageCss = "",
 ): SerializedEntry {
 	const blocks: StoredBlock[] = [];
 	const styles: StoredStyles = { ...orphanStyles };
+	const names: Record<string, string> = {};
 
 	const visit = (nodes: BuilderTree, parentKey: string | null): void => {
 		for (const node of nodes) {
@@ -66,11 +80,18 @@ export function serializeTree(
 			if (Object.keys(node.style).length > 0) {
 				styles[node.key] = node.style;
 			}
+			if (node.name) names[node.key] = node.name;
 			visit(node.children, node.key);
 		}
 	};
 
 	visit(tree, null);
+	delete styles[NAMES_KEY];
+	delete styles[CSS_KEY];
+	if (Object.keys(names).length > 0) {
+		(styles as Record<string, unknown>)[NAMES_KEY] = names;
+	}
+	if (pageCss.trim()) (styles as Record<string, unknown>)[CSS_KEY] = pageCss;
 	return { blocks, styles };
 }
 
@@ -106,6 +127,8 @@ export interface DeserializedEntry {
 	tree: BuilderTree;
 	/** Styles whose `_key` matches no block: kept around. */
 	orphanStyles: StoredStyles;
+	/** The page's custom CSS, as written (render through `pageCssText`). */
+	pageCss: string;
 }
 
 /**
@@ -119,7 +142,15 @@ export function deserializeEntry(
 	styles: StoredStyles | null | undefined,
 ): DeserializedEntry {
 	const stored = Array.isArray(blocks) ? blocks : [];
-	const storedStyles = styles && typeof styles === "object" ? styles : {};
+	const allStyles = styles && typeof styles === "object" ? styles : {};
+	const rawNames = (allStyles as Record<string, unknown>)[NAMES_KEY];
+	const names =
+		rawNames && typeof rawNames === "object" ? (rawNames as Record<string, unknown>) : {};
+	const storedStyles: StoredStyles = { ...allStyles };
+	delete storedStyles[NAMES_KEY];
+	const rawCss = (allStyles as Record<string, unknown>)[CSS_KEY];
+	const pageCss = typeof rawCss === "string" ? rawCss : "";
+	delete storedStyles[CSS_KEY];
 
 	// Block index by key, plus grouping by parent preserving array order.
 	const byKey = new Map<string, StoredBlock>();
@@ -153,6 +184,7 @@ export function deserializeEntry(
 				children: build(key),
 				parent: parentKey,
 			};
+			if (typeof names[key] === "string" && names[key] !== "") node.name = names[key] as string;
 			return node;
 		});
 	};
@@ -164,10 +196,12 @@ export function deserializeEntry(
 		if (!stylesUsed.has(key)) orphanStyles[key] = value;
 	}
 
-	return { tree, orphanStyles };
+	return { tree, orphanStyles, pageCss };
 }
 
-const KNOWN_TYPES: readonly NodeType[] = ["container"];
+// Derived from the registry: a hardcoded list would silently drop new node
+// types on load, and the next save would erase them.
+const KNOWN_TYPES: readonly NodeType[] = knownTypes();
 
 function isKnownBlock(block: StoredBlock): boolean {
 	if (typeof block._type !== "string") return false;
@@ -183,6 +217,7 @@ function propsOfBlock(block: StoredBlock): Record<string, unknown> {
 	const props: Record<string, unknown> = {};
 	for (const field of widget.fields) {
 		if (field.slug in block) props[field.slug] = block[field.slug];
+		else if (field.default !== undefined) props[field.slug] = field.default;
 	}
 	return props;
 }

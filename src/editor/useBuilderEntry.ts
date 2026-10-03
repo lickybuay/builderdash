@@ -7,7 +7,18 @@
  */
 
 import * as React from "react";
-import { apiFetch, fetchContent, parseApiResponse, updateContent } from "@emdash-cms/admin";
+import {
+	API_BASE,
+	apiFetch,
+	fetchContent,
+	parseApiResponse,
+	publishContent,
+	unscheduleContent,
+	updateContent,
+	type BylineCreditInput,
+	type ContentItem,
+	type ContentSeoInput,
+} from "@emdash-cms/admin";
 
 import type { StoredBlock, StoredStyles } from "./store/serialize";
 
@@ -31,13 +42,17 @@ interface BuilderEntryData {
 	[BLOCKS_FIELD]?: StoredBlock[];
 	[STYLES_FIELD]?: StoredStyles;
 	title?: string;
+	/** The entry's own content blocks, placed by the builder through refs. */
+	content?: Array<Record<string, unknown> & { _key: string; _type: string }>;
 }
 
-interface BuilderEntry {
-	id: string;
-	slug: string | null;
-	data?: BuilderEntryData;
-	_rev?: string;
+export type BuilderEntry = Omit<ContentItem, "data"> & { data?: BuilderEntryData };
+
+/** Entry fields EmDash applies straight to the row, outside the draft. */
+export interface EntryMetaChanges {
+	authorId?: string | null;
+	bylines?: BylineCreditInput[];
+	seo?: ContentSeoInput;
 }
 
 export interface BuilderEntryState {
@@ -45,28 +60,59 @@ export interface BuilderEntryState {
 	blocks: StoredBlock[] | null;
 	styles: StoredStyles | null;
 	isLoading: boolean;
-	error: string | null;
+	/** The entry could not be loaded: the page shows an empty state. */
+	loadError: string | null;
+	/** An action failed: shown inside the builder, which stays mounted. */
+	actionError: string | null;
+	clearActionError: () => void;
 	saving: boolean;
-	save: (payload: {
-		blocks: unknown[];
-		styles: Record<string, unknown>;
-	}) => Promise<void>;
+	/** Bumped when the stored draft was replaced (discard), to rebuild the editor. */
+	generation: number;
+	save: (payload: SavePayload) => Promise<BuilderEntry>;
+	publish: (rev?: string) => Promise<void>;
+	discard: () => Promise<void>;
+	schedule: (scheduledAt: string) => Promise<void>;
+	unschedule: () => Promise<void>;
+	updateMeta: (changes: EntryMetaChanges) => Promise<void>;
+}
+
+export interface SavePayload {
+	blocks: unknown[];
+	styles: Record<string, unknown>;
+	/** The full `content` array, only when its blocks were edited. */
+	content?: unknown[];
+	/** A new slug, only when it changed. */
+	slug?: string;
+	/** Extra data fields to write, such as a changed title. */
+	data?: Record<string, unknown>;
 }
 
 /**
- * Loads an entry and exposes a save action.
+ * Loads an entry and exposes its actions.
  *
  * `entryId` may be absent when the plugin page is opened without an entry in
  * the URL; in that case the hook stays idle and the page shows its empty state.
+ *
+ * Every write runs through one queue and carries the `_rev` of the last
+ * response, so a publish right after a save, or a SEO change while saving,
+ * never races on a stale revision.
  */
 export function useBuilderEntry(
 	collection: string,
 	entryId: string | undefined,
 ): BuilderEntryState {
-	const [entry, setEntry] = React.useState<BuilderEntry | null>(null);
+	const [entry, setEntryState] = React.useState<BuilderEntry | null>(null);
 	const [isLoading, setLoading] = React.useState(Boolean(entryId));
 	const [saving, setSaving] = React.useState(false);
-	const [error, setError] = React.useState<string | null>(null);
+	const [loadError, setLoadError] = React.useState<string | null>(null);
+	const [actionError, setActionError] = React.useState<string | null>(null);
+	const [generation, setGeneration] = React.useState(0);
+
+	const entryRef = React.useRef<BuilderEntry | null>(null);
+	const setEntry = React.useCallback((next: BuilderEntry) => {
+		entryRef.current = next;
+		setEntryState(next);
+	}, []);
 
 	React.useEffect(() => {
 		if (!entryId) {
@@ -76,7 +122,7 @@ export function useBuilderEntry(
 
 		let cancelled = false;
 		setLoading(true);
-		setError(null);
+		setLoadError(null);
 
 		void (async () => {
 			try {
@@ -85,7 +131,7 @@ export function useBuilderEntry(
 				setEntry(item);
 			} catch (cause) {
 				if (cancelled) return;
-				setError(cause instanceof Error ? cause.message : String(cause));
+				setLoadError(messageOf(cause));
 			} finally {
 				if (!cancelled) setLoading(false);
 			}
@@ -94,60 +140,160 @@ export function useBuilderEntry(
 		return () => {
 			cancelled = true;
 		};
-	}, [collection, entryId]);
+	}, [collection, entryId, setEntry]);
+
+	const queue = React.useRef<Promise<unknown>>(Promise.resolve());
+	const run = React.useCallback(<T,>(action: () => Promise<T>): Promise<T> => {
+		const next = queue.current.then(action, action);
+		queue.current = next.catch(() => undefined);
+		return next.catch((cause: unknown) => {
+			setActionError(messageOf(cause));
+			throw cause;
+		});
+	}, []);
+
+	const rev = () => {
+		const current = entryRef.current?._rev;
+		return current ? { _rev: current } : {};
+	};
 
 	const save = React.useCallback(
-		async (payload: { blocks: unknown[]; styles: Record<string, unknown> }) => {
-			if (!entryId) return;
+		(payload: SavePayload) => {
+			if (!entryId) return Promise.reject(new Error("No entry"));
 			setSaving(true);
-			setError(null);
-			try {
-				const updated = (await updateContent(
-					collection,
-					entryId,
-					{
-						data: {
-							[BLOCKS_FIELD]: payload.blocks,
-							[STYLES_FIELD]: payload.styles,
-						},
-						// Optimistic concurrency: a builder open in two tabs must
-						// not silently overwrite a newer draft.
-						...(entry?._rev ? { _rev: entry._rev } : {}),
+			setActionError(null);
+			return run(async () => {
+				const updated = (await updateContent(collection, entryId, {
+					data: {
+						...payload.data,
+						[BLOCKS_FIELD]: payload.blocks,
+						[STYLES_FIELD]: payload.styles,
+						...(payload.content ? { content: payload.content } : {}),
 					},
-				)) as unknown as BuilderEntry;
-
+					...(payload.slug !== undefined ? { slug: payload.slug } : {}),
+					// Optimistic concurrency: a builder open in two tabs must
+					// not silently overwrite a newer draft.
+					...rev(),
+				})) as unknown as BuilderEntry;
 				setEntry(updated);
-			} catch (cause) {
-				setError(cause instanceof Error ? cause.message : String(cause));
-				throw cause;
-			} finally {
-				setSaving(false);
-			}
+				return updated;
+			}).finally(() => setSaving(false));
 		},
-		[collection, entryId, entry?._rev],
+		[collection, entryId, run, setEntry],
 	);
 
-	// A stale revision (HTTP 409) is the only error worth retrying blindly: the
-	// next save re-reads `_rev` from the response of a fresh fetch.
-	const reload = React.useCallback(async () => {
-		if (!entryId) return;
-		const response = await apiFetch(`/_emdash/api/content/${collection}/${entryId}`);
-		const item = await parseApiResponse<{ item: BuilderEntry }>(
-			response,
-			"Could not reload the entry",
-		);
-		setEntry(item.item);
-	}, [collection, entryId]);
+	const publish = React.useCallback(
+		(revision?: string) => {
+			if (!entryId) return Promise.resolve();
+			setActionError(null);
+			return run(async () => {
+				const token = revision ?? entryRef.current?._rev;
+				const updated = (await publishContent(collection, entryId, {
+					...(token ? { _rev: token } : {}),
+				})) as unknown as BuilderEntry;
+				setEntry(updated);
+			});
+		},
+		[collection, entryId, run, setEntry],
+	);
 
-	void reload;
+	const discard = React.useCallback(() => {
+		if (!entryId) return Promise.resolve();
+		setActionError(null);
+		return run(async () => {
+			// With `_rev`: never discard a newer draft saved from another tab.
+			await postWithRev(collection, entryId, "discard-draft", {}, entryRef.current?._rev);
+			// The response may omit the restored data; read it back whole.
+			const fresh = (await fetchContent(collection, entryId)) as unknown as BuilderEntry;
+			setEntry(fresh);
+			setGeneration((value) => value + 1);
+		});
+	}, [collection, entryId, run, setEntry]);
+
+	const schedule = React.useCallback(
+		(scheduledAt: string) => {
+			if (!entryId) return Promise.resolve();
+			setActionError(null);
+			return run(async () => {
+				setEntry(
+					await postWithRev(collection, entryId, "schedule", { scheduledAt }, entryRef.current?._rev),
+				);
+			});
+		},
+		[collection, entryId, run, setEntry],
+	);
+
+	const unschedule = React.useCallback(() => {
+		if (!entryId) return Promise.resolve();
+		setActionError(null);
+		return run(async () => {
+			setEntry((await unscheduleContent(collection, entryId)) as unknown as BuilderEntry);
+		});
+	}, [collection, entryId, run, setEntry]);
+
+	// Author, bylines and SEO: applied at once, as EmDash's own editor does.
+	const updateMeta = React.useCallback(
+		(changes: EntryMetaChanges) => {
+			if (!entryId) return Promise.resolve();
+			setActionError(null);
+			return run(async () => {
+				const updated = (await updateContent(collection, entryId, {
+					...changes,
+					...rev(),
+				})) as unknown as BuilderEntry;
+				setEntry(updated);
+			});
+		},
+		[collection, entryId, run, setEntry],
+	);
 
 	return {
 		entry,
 		blocks: entry?.data?.[BLOCKS_FIELD] ?? null,
 		styles: entry?.data?.[STYLES_FIELD] ?? null,
 		isLoading,
-		error,
+		loadError,
+		actionError,
+		clearActionError: React.useCallback(() => setActionError(null), []),
 		saving,
+		generation,
 		save,
+		publish,
+		discard,
+		schedule,
+		unschedule,
+		updateMeta,
 	};
+}
+
+/**
+ * POST to an entry action with the optimistic-concurrency token.
+ *
+ * The admin client's `discardDraft` and `scheduleContent` take no `_rev`,
+ * although the server checks it, so these two calls are made here.
+ */
+async function postWithRev(
+	collection: string,
+	entryId: string,
+	action: "discard-draft" | "schedule",
+	body: Record<string, unknown>,
+	rev: string | undefined,
+): Promise<BuilderEntry> {
+	const response = await apiFetch(
+		`${API_BASE}/content/${encodeURIComponent(collection)}/${encodeURIComponent(entryId)}/${action}`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ ...body, ...(rev ? { _rev: rev } : {}) }),
+		},
+	);
+	const data = await parseApiResponse<{ item: BuilderEntry; _rev?: string }>(
+		response,
+		action === "schedule" ? "Failed to schedule content" : "Failed to discard draft",
+	);
+	return { ...data.item, ...(data._rev ? { _rev: data._rev } : {}) };
+}
+
+function messageOf(cause: unknown): string {
+	return cause instanceof Error ? cause.message : String(cause);
 }

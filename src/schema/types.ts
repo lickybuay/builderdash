@@ -12,11 +12,19 @@
  * container into the canvas, and a save/load round trip. Widgets are added at a
  * later stage; adding one must never require touching the canvas.
  *
- * See `.agents/docs/builderdash/02-contrato-datos.md`.
+ * See `docs/02-data-contract.md`.
  */
 
 /** Node types the builder knows about. */
-export type NodeType = "container";
+export type NodeType =
+	| "container"
+	| "content_ref"
+	| "heading"
+	| "text"
+	| "image"
+	| "button"
+	| "divider"
+	| "template_ref";
 
 /**
  * Field types a widget can declare.
@@ -32,7 +40,8 @@ export type WidgetFieldType =
 	| "number"
 	| "boolean"
 	| "select"
-	| "image";
+	| "image"
+	| "color";
 
 /** A widget field: becomes a column on the block type. */
 export interface WidgetField {
@@ -62,10 +71,12 @@ export interface WidgetDefinition {
 	accepts?: NodeType[];
 	/** `true` when the node can be dropped at the canvas root. */
 	topLevel?: boolean;
+	/** Not offered in the palette: created by the builder itself. */
+	internal?: boolean;
 	fields: WidgetField[];
 }
 
 /** Palette categories, in display order. */
-export const WIDGET_CATEGORIES = ["Structure"] as const;
+export const WIDGET_CATEGORIES = ["Structure", "Basic", "Content"] as const;
 
 export type WidgetCategory = (typeof WIDGET_CATEGORIES)[number];

@@ -1,0 +1,201 @@
+---
+/**
+ * One node of a builder layout, rendered recursively. See `BuilderLayout.astro`.
+ */
+
+import type { BuilderNode as Node } from "../editor/store/tree";
+import { elementAttributes, missingLabel } from "./styles";
+
+interface Props {
+	node: Node;
+	blocks?: unknown;
+	byKey: Map<string, { _key: string; _type: string }>;
+	/** Block types the site can render; `null` renders every block. */
+	available?: Set<string> | null;
+	edit?: boolean;
+	/** Templates map: template ID → content blocks. */
+	templates?: Map<string, unknown[]>;
+}
+
+const { node, blocks, byKey, available = null, edit = false, templates } = Astro.props;
+const Blocks = blocks as any;
+const block = node.type === "content_ref" ? byKey.get(String(node.props.ref_key)) : undefined;
+// Extra settings (CSS ID, classes) land on the element the node's styles hit:
+// the block's own box, or the container's flex box.
+const { id, classes } = elementAttributes(node);
+const missing = block && available && !available.has(block._type) ? missingLabel(block._type) : undefined;
+---
+
+{
+	node.type === "content_ref" && (
+		<div
+			class:list={["bd-element", ...classes]}
+			id={id}
+			data-bd-key={node.key}
+			data-bd-type={node.type}
+			data-bd-ref={String(node.props.ref_key)}
+			data-bd-missing={edit ? missing : undefined}
+		>
+			{block && !missing && Blocks && <Blocks value={[block]} />}
+		</div>
+	)
+}
+{
+	node.type === "container" && (
+		<div class="bd-wrap" data-bd-key={node.key} data-bd-type={node.type}>
+			<div
+				class:list={["bd-container", ...classes]}
+				id={id}
+				data-bd-container={node.key}
+				data-gap={String(node.props.gap ?? "md")}
+				data-direction={String(node.props.direction ?? "column")}
+				style={
+					typeof node.props.background_color === "string" && node.props.background_color.trim()
+						? `background-color:${node.props.background_color}`
+						: undefined
+				}
+			>
+				{node.children.map((child) => (
+					<Astro.self node={child} blocks={blocks} byKey={byKey} available={available} edit={edit} />
+				))}
+			</div>
+		</div>
+	)
+}
+{
+	node.type === "heading" && (
+		<div
+			class:list={["bd-element", ...classes]}
+			id={id}
+			data-bd-key={node.key}
+			data-bd-type={node.type}
+			data-bd-level={String(node.props.level ?? "h2")}
+		>
+			{node.props.level === "h1" && <h1>{String(node.props.text ?? "")}</h1>}
+			{node.props.level === "h2" && <h2>{String(node.props.text ?? "")}</h2>}
+			{node.props.level === "h3" && <h3>{String(node.props.text ?? "")}</h3>}
+			{node.props.level === "h4" && <h4>{String(node.props.text ?? "")}</h4>}
+			{node.props.level === "h5" && <h5>{String(node.props.text ?? "")}</h5>}
+			{node.props.level === "h6" && <h6>{String(node.props.text ?? "")}</h6>}
+		</div>
+	)
+}
+{
+	node.type === "text" && (
+		<p
+			class:list={["bd-element", ...classes]}
+			id={id}
+			data-bd-key={node.key}
+			data-bd-type={node.type}
+		>
+			{String(node.props.content ?? "")}
+		</p>
+	)
+}
+{
+	node.type === "image" && (
+		<div
+			class:list={["bd-element", ...classes]}
+			id={id}
+			data-bd-key={node.key}
+			data-bd-type={node.type}
+		>
+			{node.props.image && (
+				(() => {
+					const img = node.props.image as Record<string, unknown>;
+					let src: string | undefined;
+					if (typeof img.src === "string" && img.src) {
+						src = img.src;
+					} else if (typeof img.meta === "object" && img.meta !== null) {
+						const meta = img.meta as Record<string, unknown>;
+						const key = typeof meta.storageKey === "string" && meta.storageKey ? String(meta.storageKey) : undefined;
+						if (key) src = `/_emdash/api/media/file/${key}`;
+					} else if (typeof img.id === "string" && img.id) {
+						src = `/_emdash/api/media/file/${img.id}`;
+					}
+					return (
+						<img
+							src={src}
+							alt={String(node.props.alt ?? "")}
+							class="bd-image"
+							data-bd-width={String(node.props.width ?? "auto")}
+							data-bd-height={String(node.props.height ?? "auto")}
+							data-bd-object-fit={String(node.props.object_fit ?? "cover")}
+							style={src ? undefined : "background-image:url('')"}
+						/>
+					);
+				})()
+			)}
+		</div>
+	)
+}
+{
+	node.type === "button" && (
+		<a
+			class:list={["bd-element", "bd-button", ...classes]}
+			href={String(node.props.url ?? "#")}
+			id={id}
+			data-bd-key={node.key}
+			data-bd-type={node.type}
+		>
+			{String(node.props.label ?? "")}
+		</a>
+	)
+}
+{
+	node.type === "divider" && (
+		<hr
+			class:list={["bd-element", ...classes]}
+			id={id}
+			data-bd-key={node.key}
+			data-bd-type={node.type}
+			data-bd-divider-color={String(node.props.color ?? "default")}
+			data-bd-divider-thickness={String(node.props.thickness ?? "md")}
+			data-bd-divider-style={String(node.props.style ?? "solid")}
+		/>
+	)
+}
+{
+	node.type === "template_ref" && (
+		<div
+			class:list={["bd-element", "bd-template", ...classes]}
+			id={id}
+			data-bd-key={node.key}
+			data-bd-type={node.type}
+			data-template-id={String(node.props.ref_id ?? "")}
+		>
+			{(() => {
+				const templateBlocks = templates?.get(String(node.props.ref_id));
+				if (!templateBlocks) {
+					return edit ? (
+						<div class="bd-element" data-bd-missing="Template not found">
+							<span style="display:block;margin:1rem;padding:1.5rem;border:2px dashed #f59e0b;border-radius:8px;color:#b45309;background:#fffbeb;font:600 14px/1.4 system-ui,sans-serif;text-align:center;">
+								Template not found
+							</span>
+						</div>
+					) : null;
+				}
+				return templateBlocks.map((block: Record<string, unknown>) => (
+					<Astro.self
+						node={{
+							type: block._type.replace("builder_", "") as Node["type"],
+							key: String(block._key),
+							parent: null,
+							props: Object.fromEntries(
+								Object.entries(block).filter(
+									([k]) => !k.startsWith("_") && k !== "parent_key"
+								)
+							),
+							children: [],
+						} as Node}
+						blocks={blocks}
+						byKey={byKey}
+						available={available}
+						edit={edit}
+						templates={templates}
+					/>
+				));
+			})()}
+		</div>
+	)
+}

@@ -4,7 +4,7 @@
  * No React, no I/O. Every function returns a new (immutable) tree so the store
  * can compare by identity and undo/redo stays trivial.
  *
- * See `.agents/docs/builderdash/02-contrato-datos.md`.
+ * See `docs/02-data-contract.md`.
  */
 
 import type { NodeType } from "../../schema/types";
@@ -22,6 +22,8 @@ export interface BuilderNode {
 	children: BuilderNode[];
 	/** `key` of the parent, or `null` at the root. */
 	parent: string | null;
+	/** Editor-only name shown in the Structure panel (renamed by the user). */
+	name?: string;
 }
 
 export type Breakpoint = "desktop" | "tablet" | "mobile";
@@ -38,18 +40,40 @@ export interface SpacingValue {
 export interface StyleValues {
 	padding?: SpacingValue;
 	margin?: SpacingValue;
-	typography?: { size?: string; weight?: string; lineHeight?: string; align?: string };
+	typography?: {
+		size?: string;
+		weight?: string;
+		lineHeight?: string;
+		letterSpacing?: string;
+		align?: string;
+	};
 	color?: string;
 	background?: string;
 	border?: { width?: string; radius?: string; color?: string };
 	size?: { width?: string; maxWidth?: string; height?: string };
+	shadow?: string;
 	[key: string]: unknown;
 }
 
+/** Non-responsive settings (the Inspector's "Extra" tab). */
+export interface AdvancedValues {
+	cssId?: string;
+	/** Space-separated class names. */
+	cssClasses?: string;
+	zIndex?: string;
+	hide?: { desktop?: boolean; tablet?: boolean; mobile?: boolean };
+}
+
+/**
+ * A node's styles: one set per breakpoint, plus `advanced`. Code that walks
+ * breakpoints iterates `BREAKPOINTS`, never `Object.keys`, so `advanced` is
+ * never mistaken for one.
+ */
 export interface StyleByBreakpoint {
 	desktop?: StyleValues;
 	tablet?: StyleValues;
 	mobile?: StyleValues;
+	advanced?: AdvancedValues;
 }
 
 export type BuilderTree = BuilderNode[];
@@ -206,6 +230,17 @@ export function insertNode(
 		if (!canContain(parent.type, node.type)) return tree;
 	}
 
+	// A content block is placed once: two refs would render it twice, with
+	// duplicate ids and anchors. Template refs are exempt — the same template
+	// can be inserted in multiple places.
+	if (node.type === "content_ref") {
+		let taken = false;
+		walk(tree, (other) => {
+			if (other.type === "content_ref" && other.props.ref_key === node.props.ref_key) taken = true;
+		});
+		if (taken) return tree;
+	}
+
 	const placed: BuilderNode = { ...node, parent: parentKey };
 	return replaceChildren(tree, parentKey, (children) => {
 		const next = [...children];
@@ -308,6 +343,36 @@ export function cloneWithNewKeys(node: BuilderNode, parent: string | null): Buil
 		parent,
 		children: node.children.map((child) => cloneWithNewKeys(child, key)),
 	};
+}
+
+/**
+ * Clones a whole subtree, assigning fresh keys at every level.
+ *
+ * Returns the cloned roots plus the `oldKey → newKey` map. The map is what the
+ * caller needs to move each node's styles onto its copy: styles are stored
+ * keyed by `_key`, so a clone without the mapping would lose them.
+ *
+ * `parent` is the key the cloned roots hang from (or `null` at the root); it is
+ * NOT part of the map, because the caller owns the destination.
+ */
+export function cloneSubtreeWithMap(
+	nodes: readonly BuilderNode[],
+	parent: string | null,
+): { nodes: BuilderNode[]; keyMap: Map<string, string> } {
+	const keyMap = new Map<string, string>();
+
+	const clone = (node: BuilderNode, parentKey: string | null): BuilderNode => {
+		const key = newKey();
+		keyMap.set(node.key, key);
+		return {
+			...node,
+			key,
+			parent: parentKey,
+			children: node.children.map((child) => clone(child, key)),
+		};
+	};
+
+	return { nodes: nodes.map((node) => clone(node, parent)), keyMap };
 }
 
 /** Updates a node's props. */

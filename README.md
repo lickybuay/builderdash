@@ -1,32 +1,68 @@
 # Builderdash
 
-A visual page builder for [EmDash](https://github.com/emdash-cms/emdash), in the spirit of Elementor: a block palette, a live canvas with drag & drop, and a Structure panel to navigate and reorder the page tree.
+Visual page builder plugin for [EmDash](https://github.com/emdash-cms/emdash), in the spirit of Elementor.
 
-> **Status: early.** The editor shell works end to end (drag, nest, reorder, undo/redo, save). The only widget today is the **Container**. Public rendering, the style engine and more widgets come next.
+> **Alpha.** Builderdash is under active development: the data format and the API may change between versions. Try it on a test site first.
 
-It is a **native** EmDash plugin: the editor is a React admin page, which sandboxed plugins cannot provide.
+<!-- builderdash:screenshots -->
+<p align="center">
+	<img src="docs/images/builder.png" alt="BuilderDash: the element palette, the live preview of the page, the floating structure tree and the entry details panel" width="900" />
+</p>
 
-## Requirements
+<p align="center">
+	<img src="docs/images/builder-inspector.png" alt="BuilderDash: the inspector open on a Hero block, editing its fields" width="900" />
+</p>
 
-- EmDash `>= 1.0` on Astro, with `@astrojs/react`
-- React 18 or 19
+## Features
 
-## Install
+- **Live preview:** edit the real page, rendered by your site, in an iframe, with desktop, tablet and mobile views.
+- **Drag and drop** from the element list, inside the preview and in the floating **Structure** panel.
+- **Your site's blocks** (Hero, FAQ, Pricing…) next to the builder's **Container**: insert, edit inline or in the Inspector, duplicate, delete.
+- **Inspector** with General, Styling (per device: spacing, size, background, border, shadow, typography) and Extra (CSS ID, classes, z-index, hide per device) tabs.
+- **Details panel** like EmDash's editor: publish, discard, schedule, title and slug, author, bylines, SEO and per-page custom CSS.
+- Changes stay in the browser until **Save**; **Publish changes** saves and publishes.
 
-The package is not on npm yet. Until then, install it from GitHub (pnpm 9+):
+## About
+
+- **Package:** `@lickybuay/builderdash`
+- **Version:** 0.1.0 (alpha)
+- **Works on:** any collection that has the builder fields. The installer enables `pages` and `posts` (those your seed has: the `marketing` template has no `posts`), and works on the `blank`, `starter`, `blog`, `portfolio` and `marketing` templates.
+- **Type:** native EmDash plugin
+- **Requires:** EmDash `>= 1.0`, Astro with `@astrojs/react`, React 18 or 19
+- **License:** MIT
+
+## Quick install
+
+From the root of your EmDash site:
 
 ```bash
-pnpm add "github:lickybuay/builderdash#path:/plugin-builderdash"
+pnpm add github:lickybuay/builderdash
+pnpm exec builderdash-setup --with-render
 ```
 
-The `prepare` script builds `dist/` on install.
+The package ships built: installing it runs no build script, so pnpm's build-script allowlist needs no entry for it.
+
+`builderdash-setup` (`install.sh`) registers the plugin in `astro.config.*`, adds the builder fields and block type to your seed, and validates it with the EmDash CLI. On a site without a seed (the `blank` template) it creates `seed/seed.json` with a `pages` collection. It is idempotent and backs up every file it changes as `<file>.builderdash.bak`.
+
+Options:
+
+| Flag | What it does |
+| --- | --- |
+| `--collections=pages,posts` | Collections to enable the builder on. Default `pages,posts`; only those present in the seed are used. |
+| `--apply-schema` | Also applies the schema to the local database (`emdash seed --no-content`). Needed on a site that is already set up: the seed only applies on first setup. |
+| `--skip-install` | Configure only, without installing the package. |
+| `--with-render[=path]` | Creates `src/pages/builder-render.astro`, the route the live preview uses to re-render edited content blocks with your components. `path` is your blocks component (auto-detected for the official templates). Never overwrites an existing route. |
+
+Then restart the dev server.
+
+## Manual configure
+
+Install the package (`pnpm add github:lickybuay/builderdash`; it ships built, no install script runs), then:
 
 ### 1. Register the plugin
 
 ```js
 // astro.config.mjs
-import react from "@astrojs/react";
-import emdash from "emdash/astro";
 import { builderdashPlugin } from "@lickybuay/builderdash";
 
 export default defineConfig({
@@ -34,25 +70,23 @@ export default defineConfig({
 		react(),
 		emdash({
 			// ...database, storage
-			plugins: [builderdashPlugin({ collection: "pages" })],
+			plugins: [builderdashPlugin()],
 		}),
 	],
 });
 ```
 
-### 2. Add the builder fields to your schema
+### 2. Add the builder fields to `seed/seed.json`
 
-A plugin cannot create fields or block types at runtime, so the site declares them in its `seed/seed.json`.
-
-On the collection you want to build (`pages` by default), add two fields:
+On each collection you want to build (for example `pages` and `posts`), add:
 
 ```json
 { "slug": "builder_layout", "label": "Builder layout", "type": "blocks",
-  "validation": { "allowedTypes": ["builder_container"], "maxItems": 100 } },
+  "validation": { "allowedTypes": ["builder_container", "builder_content_ref"], "maxItems": 100 } },
 { "slug": "builder_styles", "label": "Builder styles", "type": "json" }
 ```
 
-And the block type under `blockTypes`:
+Under `blockTypes`, add:
 
 ```json
 {
@@ -71,39 +105,129 @@ And the block type under `blockTypes`:
         "validation": { "maxLength": 32 } }
     ]
   }]
+},
+{
+  "slug": "builder_content_ref",
+  "label": "Content block",
+  "category": "Builder",
+  "currentVersion": 1,
+  "versions": [{
+    "version": 1,
+    "fields": [
+      { "slug": "ref_key", "label": "Content block", "type": "string",
+        "validation": { "maxLength": 64 } },
+      { "slug": "parent_key", "label": "Parent", "type": "string",
+        "validation": { "maxLength": 32 } }
+    ]
+  }]
 }
 ```
 
-The demo site in this repository (`../seed/seed.json`) has a complete working example.
+### 3. Apply the schema to an existing database
 
-## Use
-
-In the admin, open the content list of the collection: each entry gets an **Edit with BuilderDash** button. It opens the builder at:
-
-```
-/_emdash/admin/plugins/builderdash/builder?collection=pages&id=<entry id>
+```bash
+npx emdash seed seed/seed.json --no-content
 ```
 
-- Drag **Container** from the left panel onto the canvas, or click it to insert into the selection.
-- **Structure** (right panel, toggled from the toolbar) shows the tree. Drag rows to reorder or nest.
-- Keyboard: arrows move the selected node in the canvas; in Structure, ↑↓ move focus, ←→ collapse/expand, Alt+↑↓ reorder.
-- `Cmd/Ctrl+S` saves, `Cmd/Ctrl+Z` undoes, `Cmd/Ctrl+Shift+Z` redoes.
+## Open the builder
 
-## Known limitations
+In the admin, open a collection with the builder fields and click **Edit with BuilderDash** on an entry. The button appears only on collections that declare `builder_layout`.
 
-- The content list button is limited to the `pages` collection.
-- Saved layouts are not rendered on the public site yet.
+## Render on your site
+
+The builder edits the layout; your site decides where it renders. Three small
+changes in the site, shown for the marketing template (`Base.astro`, a page
+route, and the component that renders the entry's `content` blocks).
+
+### 1. Let the layout skip its header/footer and take body classes
+
+```astro
+---
+// src/layouts/Base.astro
+interface Props {
+	/* …existing props… */
+	chrome?: boolean;              // false: the builder layout places header/footer
+	bodyClass?: string | string[]; // CSS hooks, e.g. page-<id>
+}
+const { chrome = true, bodyClass } = Astro.props;
+---
+<body class:list={bodyClass}>
+	{chrome ? (<><SiteHeader /><main><slot /></main><SiteFooter /></>) : <slot />}
+</body>
+```
+
+Move the header and footer markup into `SiteHeader.astro` / `SiteFooter.astro`
+so both the layout and the builder can render them.
+
+### 2. Render the layout in the page route
+
+```astro
+---
+import BuilderLayout from "@lickybuay/builderdash/BuilderLayout.astro";
+import { bodyClasses } from "@lickybuay/builderdash/classes";
+import { builderEditRequested, builderEditMode } from "@lickybuay/builderdash/edit-mode";
+
+const layout = page.data.builder_layout;
+const hasLayout = Array.isArray(layout) && layout.length > 0;
+const entry = { collection: "pages", id: page.data.id, slug: page.id };
+// Edit mode needs a signed-in user, and a request that asks for it is never
+// a cached variant of the public page:
+if (Astro.cache?.enabled && !builderEditRequested(Astro)) Astro.cache.set(cacheHint);
+const edit = builderEditMode(Astro);
+---
+{hasLayout ? (
+	<Base chrome={false} bodyClass={bodyClasses(entry)} /* …seo props… */>
+		<BuilderLayout
+			layout={layout}
+			styles={page.data.builder_styles}
+			content={page.data.content}
+			header={SiteHeader}
+			footer={SiteFooter}
+			blocks={MarketingBlocks}
+			blockTypes={["marketing_hero", "marketing_faq" /* …types your blocks component renders */]}
+			edit={edit}
+			entry={entry}
+		/>
+	</Base>
+) : (
+	/* your existing render */
+)}
+```
+
+`builderEditMode` turns the live-preview markup (`?_builder`) on only for a
+signed-in user: an anonymous visitor who appends `?_builder` gets the plain
+public page. The builder's own iframe carries the editor's session cookie, so
+it is unaffected. Pass `builderEditRequested(Astro)` to the cache guard the
+same way your route guards `cacheHint`, so an edit-mode render never becomes
+a cached variant of the public page.
+
+`blockTypes` lists the block types your site has a component for. A placed
+block of any other type shows **Missing component: …** in the builder's preview
+and renders nothing on the site. Omit it to render every block.
+
+The builder's palette offers the block types your `content` field allows; a
+type you disable there disappears from the palette, and blocks already placed
+show as missing in the builder.
+
+### 3. Live preview of edited blocks
+
+The Inspector re-renders an edited content block through a site route, so it is
+drawn by your own component. `builderdash-setup --with-render` creates
+`src/pages/builder-render.astro` for you (it needs your blocks component); or
+copy [`templates/builder-render.astro`](templates/builder-render.astro) and set
+the import and the allowed block types.
+
+### CSS hooks
+
+- `<body class="page-<id>">` (`post-<id>` for posts).
+- `<main class="builderdash" data-bd-id="…" data-bd-slug="…" data-bd-collection="…">`.
+- Each element: CSS ID and classes from the Inspector's **Extra** tab.
 
 ## Development
 
-This package lives in a pnpm workspace together with a demo EmDash site. See the [repository README](../README.md).
-
 ```bash
-pnpm --filter @lickybuay/builderdash typecheck
-pnpm --filter @lickybuay/builderdash test
-pnpm --filter @lickybuay/builderdash build
+pnpm install
+pnpm typecheck
+pnpm test
 ```
 
-## License
-
-MIT

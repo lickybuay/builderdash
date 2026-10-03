@@ -34,6 +34,15 @@ interface NavigatorProps {
 	/** Keyboard move of a node. Returns `true` when it applied. */
 	onMove: (key: string, intent: MoveIntent) => boolean;
 	onClose: () => void;
+	/** Overrides a row's label (content refs show the block they point at). */
+	labelFor?: (node: BuilderNode) => string | undefined;
+	/** Renames a node (double-click on its label). Empty restores the default. */
+	onRename?: (key: string, name: string) => void;
+	/** Spread on the header: it moves the floating panel. */
+	headerProps?: React.HTMLAttributes<HTMLElement>;
+	/** Minimized: only the header and its tools are shown. */
+	minimized?: boolean;
+	onToggleMinimized?: () => void;
 }
 
 /** A row as rendered: the node plus where it sits in the visible list. */
@@ -44,13 +53,28 @@ interface VisibleRow {
 	expanded: boolean;
 }
 
-/** Flattens the tree, skipping the children of collapsed nodes. */
-function visibleRows(tree: BuilderTree, collapsed: ReadonlySet<string>): VisibleRow[] {
+/**
+ * Flattens the tree, skipping the children of collapsed nodes.
+ *
+ * With a filter, only nodes whose label matches are listed, together with
+ * their ancestors (opened, so the match is visible).
+ */
+function visibleRows(
+	tree: BuilderTree,
+	collapsed: ReadonlySet<string>,
+	filter: string,
+	labelOf: (node: BuilderNode) => string,
+): VisibleRow[] {
+	const needle = filter.trim().toLocaleLowerCase();
+	const matches = (node: BuilderNode): boolean =>
+		labelOf(node).toLocaleLowerCase().includes(needle) || node.children.some(matches);
+
 	const rows: VisibleRow[] = [];
 	const visit = (nodes: BuilderTree, depth: number) => {
 		for (const node of nodes) {
+			if (needle && !matches(node)) continue;
 			const hasChildren = node.children.length > 0;
-			const expanded = hasChildren && !collapsed.has(node.key);
+			const expanded = hasChildren && (needle ? true : !collapsed.has(node.key));
 			rows.push({ node, depth, hasChildren, expanded });
 			if (expanded) visit(node.children, depth + 1);
 		}
@@ -66,11 +90,43 @@ export function Navigator({
 	onDropPayload,
 	onMove,
 	onClose,
+	labelFor,
+	onRename,
+	headerProps,
+	minimized = false,
+	onToggleMinimized,
 }: NavigatorProps): React.JSX.Element {
 	const { i18n } = useLingui();
 	const listRef = React.useRef<HTMLDivElement | null>(null);
 	const [collapsed, setCollapsed] = React.useState<ReadonlySet<string>>(() => new Set());
 	const [focusedKey, setFocusedKey] = React.useState<string | null>(null);
+	const [filter, setFilter] = React.useState("");
+
+	// Choosing an element clears the filter: the full tree comes back with the
+	// element revealed, and the preview scrolls to it.
+	const choose = React.useCallback(
+		(key: string) => {
+			setFilter("");
+			onSelect(key);
+		},
+		[onSelect],
+	);
+
+	/** Every node that has children, for "collapse all". */
+	const parents = React.useMemo(() => {
+		const keys: string[] = [];
+		const visit = (nodes: BuilderTree) => {
+			for (const node of nodes) {
+				if (node.children.length > 0) keys.push(node.key);
+				visit(node.children);
+			}
+		};
+		visit(tree);
+		return keys;
+	}, [tree]);
+
+	// One toggle: everything open → collapse all; anything closed → expand all.
+	const allExpanded = parents.every((key) => !collapsed.has(key));
 
 	const expand = React.useCallback((keys: readonly string[]) => {
 		setCollapsed((current) => {
@@ -101,7 +157,8 @@ export function Navigator({
 	);
 
 	const drop = useTreeDrop(tree, handleDrop);
-	const rows = visibleRows(tree, collapsed);
+	const labelOf = (node: BuilderNode) => labelFor?.(node) ?? requireWidget(node.type).label;
+	const rows = visibleRows(tree, collapsed, filter, labelOf);
 
 	// A selection made in the canvas must be visible here: open its ancestors
 	// and bring the row into view.
@@ -165,7 +222,7 @@ export function Navigator({
 			else if (row.node.parent) focusRow(row.node.parent);
 		} else if (key === "Enter" || key === " ") {
 			event.preventDefault();
-			onSelect(row.node.key);
+			choose(row.node.key);
 		} else if (key === "Home" && rows[0]) {
 			event.preventDefault();
 			focusRow(rows[0].node.key);
@@ -179,12 +236,39 @@ export function Navigator({
 		<aside
 			id="bd-structure"
 			aria-label={i18n._("Structure")}
-			className="flex w-64 shrink-0 flex-col border-s border-kumo-line bg-kumo-base"
+			className="flex min-h-0 w-full flex-col bg-kumo-base"
 		>
-			<div className="flex items-center justify-between border-b border-kumo-line px-3 py-2">
+			<div
+				{...headerProps}
+				title={i18n._("Drag to move. Double-click to put it back.")}
+				className="flex items-center justify-between border-b border-kumo-line px-3 py-2"
+			>
 				<h2 className="text-xs font-semibold tracking-wide text-kumo-subtle uppercase">
 					{i18n._("Structure")}
 				</h2>
+				<button
+					type="button"
+					onClick={() => setCollapsed(allExpanded ? new Set(parents) : new Set())}
+					title={allExpanded ? i18n._("Collapse all") : i18n._("Expand all")}
+					aria-label={allExpanded ? i18n._("Collapse all") : i18n._("Expand all")}
+					className="ms-auto me-1 rounded px-1 text-xs text-kumo-subtle hover:bg-kumo-tint"
+				>
+					<span aria-hidden="true">{allExpanded ? "\u229F" : "\u229E"}</span>
+				</button>
+				{onToggleMinimized ? (
+					<button
+						type="button"
+						onClick={onToggleMinimized}
+						aria-expanded={!minimized}
+						title={minimized ? i18n._("Restore") : i18n._("Minimize")}
+						aria-label={minimized ? i18n._("Restore structure panel") : i18n._("Minimize structure panel")}
+						className="me-1 flex items-center rounded px-1 py-1 text-kumo-subtle hover:bg-kumo-tint"
+					>
+						<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+							{minimized ? <rect x="5" y="5" width="14" height="14" rx="1" /> : <path d="M5 12h14" />}
+						</svg>
+					</button>
+				) : null}
 				<button
 					type="button"
 					onClick={onClose}
@@ -195,9 +279,22 @@ export function Navigator({
 				</button>
 			</div>
 
+			{minimized ? null : (
+			<>
+			<div className="border-b border-kumo-line px-3 py-2">
+				<input
+					type="search"
+					value={filter}
+					onChange={(event) => setFilter(event.target.value)}
+					placeholder={i18n._("Filter elements…")}
+					aria-label={i18n._("Filter elements")}
+					className="w-full rounded border border-kumo-line bg-kumo-control px-2 py-1.5 text-xs text-kumo-default"
+				/>
+			</div>
+
 			{rows.length === 0 ? (
 				<p className="px-3 py-4 text-xs text-kumo-subtle">
-					{i18n._("Nothing on the page yet.")}
+					{filter ? i18n._("No element matches.") : i18n._("Nothing on the page yet.")}
 				</p>
 			) : (
 				<div
@@ -217,12 +314,16 @@ export function Navigator({
 							zone={drop.zoneFor(row.node.key)}
 							drop={drop}
 							onToggle={toggle}
-							onSelect={onSelect}
+							onSelect={choose}
 							onFocus={setFocusedKey}
 							onKeyDown={handleKeyDown}
+							label={labelOf(row.node)}
+							onRename={onRename}
 						/>
 					))}
 				</div>
+			)}
+			</>
 			)}
 		</aside>
 	);
@@ -239,6 +340,8 @@ interface NavigatorRowProps {
 	onSelect: (key: string) => void;
 	onFocus: (key: string) => void;
 	onKeyDown: (event: React.KeyboardEvent, row: VisibleRow, at: number) => void;
+	label?: string;
+	onRename?: (key: string, name: string) => void;
 }
 
 function NavigatorRow({
@@ -252,14 +355,20 @@ function NavigatorRow({
 	onSelect,
 	onFocus,
 	onKeyDown,
+	label,
+	onRename,
 }: NavigatorRowProps): React.JSX.Element {
 	const { i18n } = useLingui();
 	const { node, depth, hasChildren, expanded } = row;
 	const widget = requireWidget(node.type);
 	const dragProps = useDragSource({ kind: "existing", nodeKey: node.key });
+	const [renaming, setRenaming] = React.useState(false);
+	const shown = label ?? widget.label;
 
-	// Every row would otherwise read "Container"; the direction tells them apart.
-	const detail = typeof node.props.direction === "string" ? node.props.direction : null;
+	const finishRename = (value: string | null) => {
+		setRenaming(false);
+		if (value !== null && value.trim() !== shown) onRename?.(node.key, value);
+	};
 
 	return (
 		<div
@@ -272,7 +381,7 @@ function NavigatorRow({
 			onClick={() => onSelect(node.key)}
 			onFocus={() => onFocus(node.key)}
 			onKeyDown={(event) => onKeyDown(event, row, position)}
-			{...dragProps}
+			{...(renaming ? {} : dragProps)}
 			{...drop.rowProps(node.key, expanded)}
 			style={{ paddingInlineStart: `${8 + depth * 16}px` }}
 			className={[
@@ -315,8 +424,34 @@ function NavigatorRow({
 			<span aria-hidden="true" className="text-kumo-subtle" data-icon={widget.icon}>
 				&#9638;
 			</span>
-			<span className="truncate">{widget.label}</span>
-			{detail && <span className="truncate text-kumo-subtle">· {detail}</span>}
+			{renaming ? (
+				<input
+					autoFocus
+					defaultValue={shown}
+					aria-label={i18n._("Element name")}
+					onClick={(event) => event.stopPropagation()}
+					onKeyDown={(event) => {
+						// Typing a name must not drive the tree's keyboard controls.
+						event.stopPropagation();
+						if (event.key === "Enter") finishRename(event.currentTarget.value);
+						if (event.key === "Escape") finishRename(null);
+					}}
+					onBlur={(event) => finishRename(event.currentTarget.value)}
+					className="min-w-0 flex-1 rounded border border-kumo-brand bg-kumo-control px-1 text-xs text-kumo-default"
+				/>
+			) : (
+				<span
+					className="truncate"
+					title={onRename ? i18n._("Double-click to rename") : undefined}
+					onDoubleClick={(event) => {
+						if (!onRename) return;
+						event.stopPropagation();
+						setRenaming(true);
+					}}
+				>
+					{shown}
+				</span>
+			)}
 		</div>
 	);
 }

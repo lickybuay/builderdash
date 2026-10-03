@@ -4,8 +4,7 @@
 	"description": "Visual page builder for EmDash — Elementor-style board, widget panel and inspector.",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/lickybuay/builderdash.git",
-		"directory": "plugin-builderdash"
+		"url": "git+https://github.com/lickybuay/builderdash.git"
 	},
 	"homepage": "https://github.com/lickybuay/builderdash#readme",
 	"bugs": {
@@ -19,7 +18,13 @@
 			"import": "./dist/index.mjs"
 		},
 		"./admin": "./src/editor/index.tsx",
-		"./astro": "./src/render/index.ts"
+		"./astro": "./src/render/index.ts",
+		"./BuilderLayout.astro": "./src/render/BuilderLayout.astro",
+		"./classes": "./src/render/classes.ts",
+		"./edit-mode": "./src/render/edit-mode.ts"
+	},
+	"bin": {
+		"builderdash-setup": "./install.sh"
 	},
 	"files": [
 		"dist",
@@ -28,15 +33,16 @@
 		"!src/**/*.test.tsx",
 		"README.md",
 		"LICENSE",
-		"emdash-plugin.jsonc"
+		"emdash-plugin.jsonc",
+		"install.sh",
+		"templates"
 	],
 	"scripts": {
 		"build": "tsdown src/index.ts --format esm --dts --clean",
 		"dev": "tsdown src/index.ts --format esm --dts --watch",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
-		"test:watch": "vitest",
-		"prepare": "npm run build"
+		"test:watch": "vitest"
 	},
 	"peerDependencies": {
 		"@cloudflare/kumo": "*",
