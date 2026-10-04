@@ -157,11 +157,17 @@ export const WIDGETS: readonly WidgetDefinition[] = [
 	},
 	{
 		// A reference to a reusable template from the Templates collection.
-		// Expands into its child nodes when inserted into the canvas.
+		//
+		// Internal: inserting a template COPIES its widgets into the document
+		// (see `insertSubtree`), which is what the inserter promises. A live
+		// reference would need a re-fetch on every render, so it stays out of
+		// the palette and is kept only so existing refs and old saves still
+		// round-trip.
 		type: "template_ref",
 		label: "Template",
 		icon: "squares",
 		category: "Content",
+		internal: true,
 		topLevel: true,
 		container: true,
 		accepts: ["container", "heading", "text", "image", "button", "divider"],

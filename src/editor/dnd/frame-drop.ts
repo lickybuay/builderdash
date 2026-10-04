@@ -63,6 +63,8 @@ interface Resolved {
 
 function draggedType(tree: BuilderTree, payload: DragPayload): NodeType | null {
 	if (payload.kind === "new") return payload.nodeType;
+	// A template copies its widgets in, so it fits wherever a container fits.
+	if (payload.kind === "template") return "container";
 	return findNode(tree, payload.nodeKey)?.type ?? null;
 }
 

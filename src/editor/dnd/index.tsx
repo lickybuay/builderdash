@@ -64,6 +64,8 @@ import { resolveTreeDrop, zoneFromPointer, type TreeDropZone } from "./tree-drop
 export type DragPayload =
 	/** `blockType`: a new content block of that type, placed by a content ref. */
 	| { kind: "new"; nodeType: NodeType; blockType?: string }
+	/** A saved template, copied into the tree on drop. */
+	| { kind: "template"; templateId: string }
 	| { kind: "existing"; nodeKey: string };
 
 /** Resolved insertion target: a container and a slot inside it. */
@@ -187,14 +189,19 @@ export function useDragSource(payload: DragPayload): {
 		draggable: true,
 		onDragStart: (event) => {
 			store.begin(payload);
-			event.dataTransfer.effectAllowed = payload.kind === "new" ? "copy" : "move";
+			const isNew = payload.kind === "new" || payload.kind === "template";
+			event.dataTransfer.effectAllowed = isNew ? "copy" : "move";
 			// Some browsers refuse to start a drag without data on the
 			// dataTransfer. The real payload travels in the store, so a marker is
 			// enough here.
 			event.dataTransfer.setData("application/x-builderdash-node", JSON.stringify(payload));
 			event.dataTransfer.setData(
 				"text/plain",
-				payload.kind === "new" ? payload.nodeType : payload.nodeKey,
+				payload.kind === "new"
+					? payload.nodeType
+					: payload.kind === "template"
+						? payload.templateId
+						: payload.nodeKey,
 			);
 		},
 		onDragEnd: () => store.end(),
@@ -298,7 +305,9 @@ export function ContainerDropZone({
 
 	const acceptsPayload =
 		state.payload !== null &&
-		(state.payload.kind === "new" ? accepts.includes(state.payload.nodeType) : true);
+		(state.payload.kind === "existing" || state.payload.kind === "template"
+			? true
+			: accepts.includes(state.payload.nodeType));
 
 	/** A dragged node must not target its own container. */
 	const isSelf = state.payload?.kind === "existing" && state.payload.nodeKey === containerKey;

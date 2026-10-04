@@ -15,7 +15,7 @@ import { Button, Dialog, Input, Loader } from "@cloudflare/kumo";
 
 import { useCreateTemplate, type TemplateInput } from "../templates/useTemplates";
 import { serializeTree } from "../store/serialize";
-import type { BuilderTree } from "../store/tree";
+import type { BuilderNode, BuilderTree } from "../store/tree";
 
 const CATEGORIES = [
 	"Marketing",
@@ -31,6 +31,8 @@ export interface SaveAsTemplateModalProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	tree: BuilderTree;
+	/** The current selection, when there is one: lets the user save just it. */
+	selection?: BuilderNode | null;
 	onSaved: (templateId: string) => void;
 }
 
@@ -38,6 +40,7 @@ export function SaveAsTemplateModal({
 	open,
 	onOpenChange,
 	tree,
+	selection,
 	onSaved,
 }: SaveAsTemplateModalProps) {
 	const { i18n } = useLingui();
@@ -46,16 +49,23 @@ export function SaveAsTemplateModal({
 	const [cssId, setCssId] = React.useState("");
 	const [cssClasses, setCssClasses] = React.useState("");
 	const [error, setError] = React.useState<string | null>(null);
+	// Save only the selected subtree? Off by default: whole layout.
+	const [selectionOnly, setSelectionOnly] = React.useState(false);
 
 	const createMutation = useCreateTemplate();
 	const isSaving = createMutation.isPending;
+	const canScope = Boolean(selection);
 
 	const handleSubmit = React.useCallback(
 		(e: React.FormEvent) => {
 			e.preventDefault();
 			if (!title.trim()) return;
 
-			const serialized = serializeTree(tree);
+			// A selection save wraps the subtree as a single root, so what the
+			// user picked is exactly what the template contains.
+			const source: BuilderTree =
+				canScope && selectionOnly && selection ? [{ ...selection, parent: null }] : tree;
+			const serialized = serializeTree(source);
 			const input: TemplateInput = {
 				title: title.trim(),
 				category,
@@ -73,6 +83,7 @@ export function SaveAsTemplateModal({
 					setCategory("General");
 					setCssId("");
 					setCssClasses("");
+					setSelectionOnly(false);
 					setError(null);
 				},
 				onError: (cause) => {
@@ -80,7 +91,7 @@ export function SaveAsTemplateModal({
 				},
 			});
 		},
-		[title, category, cssId, cssClasses, tree, createMutation, onSaved, onOpenChange],
+		[title, category, cssId, cssClasses, tree, selection, canScope, selectionOnly, createMutation, onSaved, onOpenChange],
 	);
 
 	return (
@@ -135,6 +146,18 @@ export function SaveAsTemplateModal({
 						onChange={(e) => setCssClasses(e.target.value)}
 						className="w-full"
 					/>
+
+					{canScope ? (
+						<label className="flex items-center gap-2 text-sm text-kumo-text">
+							<input
+								type="checkbox"
+								checked={selectionOnly}
+								onChange={(e) => setSelectionOnly(e.target.checked)}
+								className="accent-kumo-brand"
+							/>
+							{i18n._("Save only the selected element")}
+						</label>
+					) : null}
 
 					{error && (
 						<p className="text-sm text-kumo-danger">{error}</p>

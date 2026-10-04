@@ -287,7 +287,7 @@ function BuilderShell({
 	// The template's own `builder_layout` is the source (not `content`, which is
 	// the marketing blocks the template may carry alongside).
 	const insertTemplate = React.useCallback(
-		async (templateId: string) => {
+		async (templateId: string, at?: { parentKey: string | null; index?: number }) => {
 			setTemplateError(null);
 			try {
 				const template = await fetchTemplate(templateId);
@@ -304,8 +304,22 @@ function BuilderShell({
 					setTemplateError(i18n._("That template has no layout to insert."));
 					return;
 				}
-				const at = clickTarget(builder.tree, selected);
-				builder.insertSubtree(source, at.parentKey, at.index);
+				// The template's own CSS ID/classes land on the copy's root node,
+				// the way Elementor attaches a saved template's wrapper settings.
+				// Only when the template has a single root, so nothing is guessed.
+				const root = source[0]!;
+				if (source.length === 1 && (template.css_id || template.css_classes)) {
+					root.style = {
+						...root.style,
+						advanced: {
+							...root.style.advanced,
+							...(template.css_id ? { cssId: template.css_id } : {}),
+							...(template.css_classes ? { cssClasses: template.css_classes } : {}),
+						},
+					};
+				}
+				const target = at ?? clickTarget(builder.tree, selected);
+				builder.insertSubtree(source, target.parentKey, target.index);
 			} catch (cause) {
 				setTemplateError(cause instanceof Error ? cause.message : i18n._("Failed to insert template"));
 			}
@@ -372,9 +386,13 @@ function BuilderShell({
 				builder.addNode(payload.nodeType, target.parentKey, target.index);
 				return;
 			}
+			if (payload.kind === "template") {
+				void insertTemplate(payload.templateId, target);
+				return;
+			}
 			builder.moveExisting(payload.nodeKey, target.parentKey, target.index);
 		},
-		[builder, insertBlock, blockTypes.allowed],
+		[builder, insertBlock, insertTemplate, blockTypes.allowed],
 	);
 
 	// A block with an empty required field would make the server reject the
@@ -664,7 +682,7 @@ function BuilderShell({
 							) : null}
 							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
 					{showPalette ? (
-						<Palette blockTypes={blockTypes.allowed} onInsert={insertFromPalette} />
+						<Palette blockTypes={blockTypes.allowed} onInsert={insertFromPalette} onOpenInserter={() => setInserterOpen(true)} />
 					) : selected ? (
 						<Inspector
 							key={selected.key}
@@ -766,6 +784,7 @@ function BuilderShell({
 					open={inserterOpen}
 					onOpenChange={setInserterOpen}
 					onInsert={insertTemplate}
+					onNew={() => setSaveAsOpen(true)}
 				/>
 
 				{/* Save-as-template modal */}
@@ -773,6 +792,7 @@ function BuilderShell({
 					open={saveAsOpen}
 					onOpenChange={setSaveAsOpen}
 					tree={builder.tree}
+					selection={selected}
 					onSaved={() => {
 						setSaveAsOpen(false);
 						setInserterOpen(true);
@@ -918,15 +938,20 @@ interface PaletteEntry {
 	category: string;
 	payload: DragPayload;
 	description?: string;
+	/** Special entry: opens a flow instead of inserting a node. */
+	action?: "templates";
 }
 
 function Palette({
 	blockTypes,
 	onInsert,
+	onOpenInserter,
 }: {
 	/** The site's block types the page may use (Hero, FAQ…). */
 	blockTypes: BlockTypeDef[];
 	onInsert: (payload: DragPayload) => void;
+	/** Opens the template inserter, for the "Template" entry. */
+	onOpenInserter: () => void;
 }): React.JSX.Element {
 	const { i18n } = useLingui();
 	const entries = React.useMemo<PaletteEntry[]>(
@@ -946,6 +971,14 @@ function Palette({
 				description: type.description,
 				payload: { kind: "new", nodeType: "content_ref", blockType: type.slug } as DragPayload,
 			})),
+			{
+				id: "templates",
+				label: i18n._("Template"),
+				category: i18n._("Reusable"),
+				description: i18n._("Insert a saved template"),
+				payload: { kind: "new", nodeType: "container" } as DragPayload,
+				action: "templates",
+			},
 		],
 		[blockTypes, i18n],
 	);
@@ -977,7 +1010,7 @@ function Palette({
 						{shown
 							.filter((entry) => entry.category === category)
 							.map((entry) => (
-								<PaletteItem key={entry.id} entry={entry} onInsert={onInsert} />
+								<PaletteItem key={entry.id} entry={entry} onInsert={onInsert} onOpenInserter={onOpenInserter} />
 							))}
 					</ul>
 				</div>
@@ -989,12 +1022,37 @@ function Palette({
 function PaletteItem({
 	entry,
 	onInsert,
+	onOpenInserter,
 }: {
 	entry: PaletteEntry;
 	onInsert: (payload: DragPayload) => void;
+	onOpenInserter: () => void;
 }): React.JSX.Element {
 	const { i18n } = useLingui();
 	const dragProps = useDragSource(entry.payload);
+
+	// The template entry opens the inserter instead of dropping a node: there
+	// is no single "template widget" to place, the user picks one.
+	if (entry.action === "templates") {
+		return (
+			<li>
+				<button
+					type="button"
+					onClick={onOpenInserter}
+					title={entry.description || i18n._("Insert a saved template")}
+					className="flex w-full cursor-pointer flex-col items-center gap-1 rounded-lg border border-kumo-line bg-kumo-control px-2 py-3 text-center transition-colors hover:border-kumo-fill-hover hover:bg-kumo-tint"
+				>
+					<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="text-kumo-subtle">
+						<rect x="3" y="3" width="7" height="7" rx="1" />
+						<rect x="14" y="3" width="7" height="7" rx="1" />
+						<rect x="3" y="14" width="7" height="7" rx="1" />
+						<rect x="14" y="14" width="7" height="7" rx="1" />
+					</svg>
+					<span className="text-xs font-medium text-kumo-strong">{entry.label}</span>
+				</button>
+			</li>
+		);
+	}
 
 	return (
 		<li>

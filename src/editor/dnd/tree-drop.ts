@@ -43,6 +43,8 @@ export function zoneFromPointer(offsetY: number, height: number, canNest: boolea
 /** The type being dragged, or `null` when the dragged node no longer exists. */
 function draggedType(tree: BuilderTree, payload: DragPayload): NodeType | null {
 	if (payload.kind === "new") return payload.nodeType;
+	// A template copies its widgets in, so it fits wherever a container fits.
+	if (payload.kind === "template") return "container";
 	return findNode(tree, payload.nodeKey)?.type ?? null;
 }
 

@@ -50,6 +50,11 @@ export interface TemplateSummary {
 	css_id?: string;
 	css_classes?: string;
 	display_target?: string;
+	/**
+	 * Node types of the template's layout, in render order. Drives the
+	 * inserter's thumbnail without shipping the whole layout to the list.
+	 */
+	layoutTypes?: string[];
 }
 
 /** Full template with content blocks. */
@@ -73,6 +78,12 @@ async function fetchTemplates(): Promise<TemplateSummary[]> {
 	);
 	return (data.items ?? []).map((item) => {
 		const fields = (item.data ?? {}) as Record<string, unknown>;
+		const layout = Array.isArray(fields.builder_layout) ? fields.builder_layout : [];
+		const layoutTypes = layout
+			.map((block) => (typeof (block as Record<string, unknown>)._type === "string"
+				? ((block as Record<string, unknown>)._type as string)
+				: ""))
+			.filter(Boolean);
 		return {
 			id: item.id as string,
 			title: (fields.title as string) ?? "",
@@ -80,6 +91,7 @@ async function fetchTemplates(): Promise<TemplateSummary[]> {
 			css_id: fields.css_id as string | undefined,
 			css_classes: fields.css_classes as string | undefined,
 			display_target: fields.display_target as string | undefined,
+			layoutTypes,
 		};
 	});
 }

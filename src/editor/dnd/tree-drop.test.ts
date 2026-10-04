@@ -121,4 +121,12 @@ describe("resolveTreeDrop", () => {
 			index: 0,
 		});
 	});
+
+	it("accepts a template drop where a container fits", () => {
+		const tpl = { kind: "template" as const, templateId: "tpl-1" };
+		// Inside a container, at the end.
+		expect(resolveTreeDrop(tree(), tpl, "a", "inside", false)).toEqual({ parentKey: "a", index: 0 });
+		// At the root, before another node.
+		expect(resolveTreeDrop(tree(), tpl, "a", "before", false)).toEqual({ parentKey: null, index: 0 });
+	});
 });
