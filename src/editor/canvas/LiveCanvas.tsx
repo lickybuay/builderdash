@@ -31,7 +31,7 @@ import {
 	type DropTarget,
 	type FrameDropLine,
 } from "../dnd/index";
-import { BASE_CSS, generateCss, pageCssText } from "../../render/styles";
+import { generateCss, pageCssText } from "../../render/styles";
 import { applyStyles, applyTree, markMissing, nodeRect, readTokens } from "./live-dom";
 
 interface LiveCanvasProps {
@@ -109,10 +109,7 @@ export function LiveCanvas({
 	const [src, setSrc] = React.useState<string | null>(null);
 	const [failed, setFailed] = React.useState(false);
 	const [loadedAt, setLoadedAt] = React.useState(0);
-	const isTemplate = collection === "templates";
 	const hoverKey = React.useRef<string | null>(null);
-	// Blob URL for the template fallback canvas.
-	const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
 
 	// What each content block currently looks like in the preview, as JSON:
 	// starts as the stored draft on every load, then follows each re-render.
@@ -143,27 +140,21 @@ export function LiveCanvas({
 	const [inlineEndedAt, setInlineEndedAt] = React.useState(0);
 
 	// A fresh preview URL per load: an expired token would silently fall back
-	// to the published page. Templates have no routable URL, so generate a
-	// minimal blob canvas so applyTree has a DOM to work on.
+	// to the published page. Templates are not routable, so their preview is a
+	// route the site provides: `/templates/<id>/preview`, which renders their
+	// layout with the site's header, footer and styles.
 	React.useEffect(() => {
 		let cancelled = false;
 		setFailed(false);
 		if (collection === "templates") {
-			const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>${BASE_CSS}</style>
-<style id="bd-styles"></style>
-</head>
-<body style="margin:0;padding:24px;font-family:Inter,system-ui,sans-serif;line-height:1.5">
-<div id="bd-root"><main data-bd-main></main></div>
-</body>
-</html>`;
-			const blob = new Blob([html], { type: "text/html" });
-			const url = URL.createObjectURL(blob);
-			setSrc(url);
-			setBlobUrl(url);
+			if (!entryId) {
+				// A brand-new template: no entry to preview yet.
+				setSrc(null);
+				return;
+			}
+			setSrc(
+				`/template-preview?id=${encodeURIComponent(entryId)}&_builder=1&_draft=1`,
+			);
 			return;
 		}
 		getPreviewUrl(collection, entryId)
@@ -183,13 +174,6 @@ export function LiveCanvas({
 			cancelled = true;
 		};
 	}, [collection, entryId, reloadToken]);
-
-	// Revoke the blob URL when it changes or the effect cleans up.
-	React.useEffect(() => {
-		return () => {
-			if (blobUrl) URL.revokeObjectURL(blobUrl);
-		};
-	}, [blobUrl]);
 
 	const drawOverlay = React.useCallback(() => {
 		const doc = frameRef.current?.contentDocument;
@@ -261,8 +245,7 @@ export function LiveCanvas({
 		if (!doc || !win) return;
 
 		// Not a builder render (no layout, 404, expired token): say so.
-		// Templates use a fallback blob canvas — skip the [data-bd-root] check.
-		if (!isTemplate && !doc.querySelector("[data-bd-root]")) {
+		if (!doc.querySelector("[data-bd-root]")) {
 			setFailed(true);
 			return;
 		}

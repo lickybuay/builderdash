@@ -20,6 +20,8 @@
 		"./admin": "./src/editor/index.tsx",
 		"./astro": "./src/render/index.ts",
 		"./BuilderLayout.astro": "./src/render/BuilderLayout.astro",
+		"./TemplatePart.astro": "./src/render/TemplatePart.astro",
+		"./parts": "./src/render/parts.ts",
 		"./classes": "./src/render/classes.ts",
 		"./edit-mode": "./src/render/edit-mode.ts"
 	},

@@ -5,6 +5,7 @@
 
 import type { BuilderNode as Node } from "../editor/store/tree";
 import { elementAttributes, missingLabel } from "./styles";
+import { deserializeEntry, type StoredBlock, type StoredStyles } from "../editor/store/serialize";
 
 interface Props {
 	node: Node;
@@ -13,8 +14,8 @@ interface Props {
 	/** Block types the site can render; `null` renders every block. */
 	available?: Set<string> | null;
 	edit?: boolean;
-	/** Templates map: template ID → content blocks. */
-	templates?: Map<string, unknown[]>;
+	/** Templates map: template ID → its stored layout and styles. */
+	templates?: Map<string, { layout: unknown[]; styles: unknown }>;
 }
 
 const { node, blocks, byKey, available = null, edit = false, templates } = Astro.props;
@@ -165,8 +166,8 @@ const missing = block && available && !available.has(block._type) ? missingLabel
 			data-template-id={String(node.props.ref_id ?? "")}
 		>
 			{(() => {
-				const templateBlocks = templates?.get(String(node.props.ref_id));
-				if (!templateBlocks) {
+				const source = templates?.get(String(node.props.ref_id));
+				if (!source) {
 					return edit ? (
 						<div class="bd-element" data-bd-missing="Template not found">
 							<span style="display:block;margin:1rem;padding:1.5rem;border:2px dashed #f59e0b;border-radius:8px;color:#b45309;background:#fffbeb;font:600 14px/1.4 system-ui,sans-serif;text-align:center;">
@@ -175,19 +176,15 @@ const missing = block && available && !available.has(block._type) ? missingLabel
 						</div>
 					) : null;
 				}
-				return templateBlocks.map((block: Record<string, unknown>) => (
+				// Rebuild the template's own tree so nested containers keep their
+				// hierarchy: a flat list would drop every child into the wrapper.
+				const { tree: templateTree } = deserializeEntry(
+					source.layout as StoredBlock[],
+					source.styles as StoredStyles,
+				);
+				return templateTree.map((child) => (
 					<Astro.self
-						node={{
-							type: block._type.replace("builder_", "") as Node["type"],
-							key: String(block._key),
-							parent: null,
-							props: Object.fromEntries(
-								Object.entries(block).filter(
-									([k]) => !k.startsWith("_") && k !== "parent_key"
-								)
-							),
-							children: [],
-						} as Node}
+						node={child}
 						blocks={blocks}
 						byKey={byKey}
 						available={available}

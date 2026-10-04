@@ -33,7 +33,7 @@ const CATEGORIES = [
 export interface TemplateInserterProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onInsert: (templateId: string) => void | Promise<void>;
+	onInsert: (templateId: string, mode: "copy" | "global") => void | Promise<void>;
 	/** Opens the save-as-template flow from inside the modal. */
 	onNew?: () => void;
 }
@@ -42,6 +42,9 @@ export function TemplateInserter({ open, onOpenChange, onInsert, onNew }: Templa
 	const { i18n } = useLingui();
 	const [search, setSearch] = React.useState("");
 	const [category, setCategory] = React.useState<string>("all");
+	// Copy vs. live reference. Copy is the safe default (Elementor's saved
+	// template); a reference is for parts repeated across pages (a header).
+	const [global, setGlobal] = React.useState(false);
 
 	const { data: templates, isLoading } = useTemplates();
 
@@ -57,12 +60,13 @@ export function TemplateInserter({ open, onOpenChange, onInsert, onNew }: Templa
 
 	const handleInsert = React.useCallback(
 		(id: string) => {
-			onInsert(id);
+			onInsert(id, global ? "global" : "copy");
 			onOpenChange(false);
 			setSearch("");
 			setCategory("all");
+			setGlobal(false);
 		},
-		[onInsert, onOpenChange],
+		[onInsert, onOpenChange, global],
 	);
 
 	return (
@@ -96,6 +100,16 @@ export function TemplateInserter({ open, onOpenChange, onInsert, onNew }: Templa
 						))}
 					</select>
 				</div>
+
+				<label className="mb-3 flex items-center gap-2 text-xs text-kumo-subtle">
+					<input
+						type="checkbox"
+						checked={global}
+						onChange={(e) => setGlobal(e.target.checked)}
+						className="accent-kumo-brand"
+					/>
+					{i18n._("Insert as a live reference (edits to the template update every instance)")}
+				</label>
 
 				{/* Template list */}
 				<div className="flex-1 overflow-y-auto min-h-0">

@@ -280,15 +280,28 @@ function BuilderShell({
 		else builder.addNode(payload.nodeType, at.parentKey, at.index);
 	};
 
-	// Copy a template's widgets into the tree at the click target.
+	// Insert a template's widgets at the click target.
 	//
-	// Elementor's "Saved Template" semantics: the template's nodes are cloned
-	// with fresh keys, so editing the original later does not touch this copy.
+	// Two modes, mirroring Elementor:
+	//   - "copy" (default): the template's nodes are cloned with fresh keys, so
+	//     editing the original later does not touch this instance.
+	//   - "global": a live `template_ref` is placed; the render expands it, so
+	//     editing the original updates every instance. Used for repeated parts
+	//     (a header, a CTA band).
 	// The template's own `builder_layout` is the source (not `content`, which is
 	// the marketing blocks the template may carry alongside).
 	const insertTemplate = React.useCallback(
-		async (templateId: string, at?: { parentKey: string | null; index?: number }) => {
+		async (
+			templateId: string,
+			at?: { parentKey: string | null; index?: number },
+			mode: "copy" | "global" = "copy",
+		) => {
 			setTemplateError(null);
+			const target = at ?? clickTarget(builder.tree, selected);
+			if (mode === "global") {
+				builder.insertTemplate(templateId, target.parentKey, target.index);
+				return;
+			}
 			try {
 				const template = await fetchTemplate(templateId);
 				const layout = template.builder_layout ?? [];
@@ -318,7 +331,6 @@ function BuilderShell({
 						},
 					};
 				}
-				const target = at ?? clickTarget(builder.tree, selected);
 				builder.insertSubtree(source, target.parentKey, target.index);
 			} catch (cause) {
 				setTemplateError(cause instanceof Error ? cause.message : i18n._("Failed to insert template"));
@@ -783,7 +795,7 @@ function BuilderShell({
 				<TemplateInserter
 					open={inserterOpen}
 					onOpenChange={setInserterOpen}
-					onInsert={insertTemplate}
+					onInsert={(templateId, mode) => void insertTemplate(templateId, undefined, mode)}
 					onNew={() => setSaveAsOpen(true)}
 				/>
 

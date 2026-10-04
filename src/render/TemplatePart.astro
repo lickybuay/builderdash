@@ -1,0 +1,62 @@
+---
+/**
+ * Renders ONE stored layout as a fragment, with no page chrome.
+ *
+ * This is what a "template part" is: a template assigned to a slot (the site
+ * header, the footer) whose widgets are drawn where that slot goes. Unlike
+ * `BuilderLayout`, it adds no <main>, no header/footer of its own, and no
+ * site chrome: the caller places it.
+ *
+ *   <TemplatePart
+ *     layout={headerTemplate.layout}
+ *     styles={headerTemplate.styles}
+ *     blocks={MarketingBlocks}
+ *     blockTypes={BUILDER_BLOCK_TYPES}
+ *   />
+ *
+ * Every node keeps its `data-bd-key` wrapper, so the markup is the same shape
+ * `BuilderLayout` produces and can be edited in the builder's live preview.
+ */
+
+import { deserializeEntry, type StoredBlock, type StoredStyles } from "../editor/store/serialize";
+import type { BuilderTree } from "../editor/store/tree";
+import BuilderNode from "./BuilderNode.astro";
+import { generateCss, pageCssText } from "./styles";
+
+interface Props {
+	layout: unknown[] | null | undefined;
+	styles?: unknown;
+	content?: Array<{ _key: string; _type: string }> | null;
+	blocks?: unknown;
+	blockTypes?: readonly string[];
+	edit?: boolean;
+	/** Templates map: template ID → its stored layout and styles (nested refs). */
+	templates?: Map<string, { layout: unknown[]; styles: unknown }>;
+}
+
+const { layout, styles, content, blocks, blockTypes, edit = false, templates } = Astro.props;
+
+const { tree, pageCss } = deserializeEntry(layout as StoredBlock[] | null, styles as StoredStyles | null);
+const nodeCss = generateCss(tree, { edit }) + pageCssText(pageCss);
+
+const contentBlocks = Array.isArray(content) ? content : [];
+const byKey = new Map(contentBlocks.map((block) => [block._key, block]));
+
+const referenced = new Set<string>();
+const collect = (nodes: BuilderTree) => {
+	for (const node of nodes) {
+		if (node.type === "content_ref") referenced.add(String(node.props.ref_key));
+		collect(node.children);
+	}
+};
+collect(tree);
+
+const available = blockTypes ? new Set(blockTypes) : null;
+const shared = { blocks, byKey, available, edit, templates };
+---
+
+<div class="bd-template-part" data-bd-part style="display: contents">
+	{tree.map((node) => <BuilderNode node={node} {...shared} />)}
+</div>
+
+<style id="bd-part-styles" set:html={nodeCss}></style>
