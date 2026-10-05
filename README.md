@@ -133,6 +133,24 @@ npx emdash seed seed/seed.json --no-content
 
 In the admin, open a collection with the builder fields and click **Edit with BuilderDash** on an entry. The button appears only on collections that declare `builder_layout`.
 
+## Create a template
+
+On a template collection, the admin's **Create** opens the builder's blank canvas
+instead of EmDash's content editor, so the layout is built before the entry
+exists.
+
+**Why the default editor flashes first.** EmDash exposes no extension point for
+that button: it is a router link to `/content/<collection>/new`, and the editor
+panels are not rendered on the "new" page. The admin is a client-side SPA, so a
+server redirect cannot catch an in-app navigation either. The redirect therefore
+watches the SPA's history (`src/editor/new-entry-redirect.ts`): the browser first
+routes to EmDash's editor and only then navigates to the builder. That first
+frame is the flash you see before the builder appears. It is expected, not a
+bug — a supported hook would remove it.
+
+Only the template collection is redirected; every other collection keeps
+EmDash's own create flow.
+
 ## Render on your site
 
 The builder edits the layout; your site decides where it renders. Three small
