@@ -147,14 +147,11 @@ export function LiveCanvas({
 		let cancelled = false;
 		setFailed(false);
 		if (collection === "templates") {
-			if (!entryId) {
-				// A brand-new template: no entry to preview yet.
-				setSrc(null);
-				return;
-			}
-			setSrc(
-				`/template-preview?id=${encodeURIComponent(entryId)}&_builder=1&_draft=1`,
-			);
+			// With an id: that template's draft. Without: the blank canvas for a
+			// new one, so the builder has the site chrome and an empty <main> to
+			// drop widgets into (instead of hanging on "loading").
+			const query = entryId ? `id=${encodeURIComponent(entryId)}&` : "";
+			setSrc(`/template-preview?${query}_builder=1&_draft=1`);
 			return;
 		}
 		getPreviewUrl(collection, entryId)

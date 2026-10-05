@@ -468,13 +468,16 @@ function BuilderShell({
 			.replace(/-+/g, "-")
 			.slice(0, 100);
 		try {
+			// Persist what was built on the blank canvas: without this, the
+			// widgets added before Create would be lost on navigation.
+			const payload = builder.toSerializable();
 			const created = await createContent(collection, {
 				slug: slug || "untitled",
 				data: {
 					title: currentTitle,
-					[BLOCKS_FIELD]: [],
-					[STYLES_FIELD]: {},
-					content: [],
+					[BLOCKS_FIELD]: payload.blocks,
+					[STYLES_FIELD]: payload.styles,
+					content: builder.content,
 				},
 			});
 			// Navigate to the builder with the new entry ID.
@@ -486,7 +489,7 @@ function BuilderShell({
 		} catch {
 			// Shown in the error bar; the editor keeps its state.
 		}
-	}, [collection, title, i18n, PLUGIN_ID]);
+	}, [collection, title, i18n, PLUGIN_ID, builder]);
 
 	// Ctrl/Cmd+S saves. Undo/redo keep the shortcuts people already have in
 	// their fingers; the buttons come with the fuller toolbar later.
