@@ -10,6 +10,13 @@
  * would never fire on an in-app navigation either. Watching the SPA's history is
  * the only place left.
  *
+ * Two layers: a capture-phase click listener cancels the create link before the
+ * router sees it (no flash), and a history watcher catches every other path to
+ * the "new" page (with a one-frame flash). The click layer relies on EmDash
+ * rendering the create button as an `<a href>` (TanStack `Link`); if that ever
+ * becomes an onClick + navigate(), the flash returns silently and only the
+ * history watcher remains.
+ *
  * Scope: only the templates collection. Other collections keep EmDash's own
  * create flow. Widen `TEMPLATE_COLLECTIONS` if the builder should own more.
  *
@@ -22,8 +29,8 @@ import { PLUGIN_ID } from "../plugin-id";
 /** Collections whose "create" opens the builder's blank canvas. */
 const TEMPLATE_COLLECTIONS: ReadonlySet<string> = new Set(["templates"]);
 
-/** The admin's new-entry URL for a collection. */
-const NEW_ENTRY = /\/_emdash\/admin\/content\/([^/?#]+)\/new\/?(?:[?#]|$)/;
+/** The admin's new-entry pathname for a collection. */
+const NEW_ENTRY = /^\/_emdash\/admin\/content\/([^/]+)\/new\/?$/;
 
 /** The builder's new-entry URL: no `id`, so the shell shows a blank canvas. */
 export function builderNewEntryUrl(collection: string): string {
@@ -32,9 +39,26 @@ export function builderNewEntryUrl(collection: string): string {
 
 let installed = false;
 
+/**
+ * The collection a same-origin new-entry URL points at, or null. Other origins,
+ * and the path appearing only in a query or hash, never match. A malformed
+ * escape is treated as no match rather than thrown into the router.
+ */
 function collectionOf(url: string): string | null {
-	const match = NEW_ENTRY.exec(url);
-	return match ? decodeURIComponent(match[1]!) : null;
+	let parsed: URL;
+	try {
+		parsed = new URL(url, window.location.href);
+	} catch {
+		return null;
+	}
+	if (parsed.origin !== window.location.origin) return null;
+	const match = NEW_ENTRY.exec(parsed.pathname);
+	if (!match) return null;
+	try {
+		return decodeURIComponent(match[1]!);
+	} catch {
+		return null;
+	}
 }
 
 function maybeRedirect(url: string): void {
@@ -51,6 +75,30 @@ export function installNewEntryRedirect(): void {
 	if (installed || typeof window === "undefined") return;
 	installed = true;
 
+	// A plain click on a "create" link: cancel it in the capture phase, before
+	// React's handlers run. The router's Link skips navigation when the event is
+	// already defaultPrevented, so EmDash's editor never renders — no flash.
+	// Modified clicks (new tab/window) are left alone; that load is caught by the
+	// direct-load check below.
+	document.addEventListener(
+		"click",
+		(event) => {
+			if (event.defaultPrevented || event.button !== 0) return;
+			if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+			if (!(event.target instanceof Element)) return;
+			const anchor = event.target.closest("a[href]");
+			if (!(anchor instanceof HTMLAnchorElement)) return;
+			if (anchor.target && anchor.target !== "_self") return;
+			const collection = collectionOf(anchor.href);
+			if (!collection || !TEMPLATE_COLLECTIONS.has(collection)) return;
+			event.preventDefault();
+			window.location.assign(builderNewEntryUrl(collection));
+		},
+		true,
+	);
+
+	// Fallback for navigations that are not link clicks (programmatic navigate(),
+	// back/forward). These still render EmDash's editor for a frame first.
 	// The SPA router navigates with pushState/replaceState. Wrap both: run the
 	// original first (so every other collection navigates normally), then
 	// decide. A template gets a full navigation to the builder.
