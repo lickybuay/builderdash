@@ -17,6 +17,8 @@ Visual page builder plugin for [EmDash](https://github.com/emdash-cms/emdash), i
 
 - **Live preview:** edit the real page, rendered by your site, in an iframe, with desktop, tablet and mobile views.
 - **Drag and drop** from the element list, inside the preview and in the floating **Structure** panel.
+- **Add in place,** as in Elementor: the preview ends with a **Drag widget here** area, hovering a container shows a tab with **+** (a new empty container above it), a drag handle and **×** (delete), and an empty container shows a **+**. Each **+** opens the element list; the next element you pick lands on that spot. The canvas chrome is added by the editor only — the published page never has it.
+- **Context menu,** as in Elementor: right-click an element in the preview or a row in **Structure** (or press the Menu key / Shift+F10) for **Duplicate** (⌘D), **Copy** (⌘C), **Paste** (⌘V), **Copy style**, **Paste style** (⌘⇧V, same element type), **Reset style** and **Delete** (⌫). The clipboard lives in `localStorage`, so a copy pastes in another tab; content blocks travel with their element and get fresh keys. Shortcuts never fire while you type, and ⌘+right-click keeps the browser's menu.
 - **Your site's blocks** (Hero, FAQ, Pricing…) next to the builder's **Container**: insert, edit inline or in the Inspector, duplicate, delete.
 - **Inspector** with General, Styling (per device: spacing, size, background, border, shadow, typography) and Extra (CSS ID, classes, z-index, hide per device) tabs.
 - **Details panel** like EmDash's editor: publish, discard, schedule, title and slug, author, bylines, SEO and per-page custom CSS.
@@ -139,14 +141,23 @@ On a template collection, the admin's **Create** opens the builder's blank canva
 instead of EmDash's content editor, so the layout is built before the entry
 exists.
 
-**Why the default editor flashes first.** EmDash exposes no extension point for
-that button: it is a router link to `/content/<collection>/new`, and the editor
-panels are not rendered on the "new" page. The admin is a client-side SPA, so a
-server redirect cannot catch an in-app navigation either. The redirect therefore
-watches the SPA's history (`src/editor/new-entry-redirect.ts`): the browser first
-routes to EmDash's editor and only then navigates to the builder. That first
-frame is the flash you see before the builder appears. It is expected, not a
-bug — a supported hook would remove it.
+**How it is intercepted.** EmDash exposes no extension point for that button: it
+is a router link to `/content/<collection>/new`, and the editor panels are not
+rendered on the "new" page. The admin is a client-side SPA, so a server redirect
+cannot catch an in-app navigation either. `src/editor/new-entry-redirect.ts`
+therefore works in two layers:
+
+- A click on the create link is cancelled in the capture phase, before the
+  router handles it, and the browser goes straight to the builder. EmDash's
+  editor never renders.
+- Any other path to the "new" page (a programmatic navigation, back/forward, a
+  typed URL) is caught by watching the SPA's history. Those routes still show
+  EmDash's editor for one frame before the builder — a supported hook would
+  remove it.
+
+The builder is opened with a full page load, like **Edit with BuilderDash**, so
+the admin's loading shell shows briefly. The create link's `?locale=` is not
+carried over to the builder.
 
 Only the template collection is redirected; every other collection keeps
 EmDash's own create flow.
