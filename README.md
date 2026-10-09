@@ -96,58 +96,36 @@ export default defineConfig({
 kumo). Without it the builder fails with "useLingui hook was used without
 I18nProvider" and the content list shows "Plugin column unavailable".
 
-### 2. Add the builder fields to `seed/seed.json`
+### 2. Add the builder fields and block types to `seed/seed.json`
 
-On each collection you want to build (for example `pages` and `posts`), add:
+Every element the builder offers is stored as an EmDash block type, so the seed
+must declare all of them (a missing one can be added in the builder but not
+saved: "block type … is unavailable"). They are generated from the plugin's
+widget registry; print them with:
 
-```json
-{ "slug": "builder_layout", "label": "Builder layout", "type": "blocks",
-  "validation": { "allowedTypes": ["builder_container", "builder_content_ref"], "maxItems": 100 } },
-{ "slug": "builder_styles", "label": "Builder styles", "type": "json" }
+```bash
+node --input-type=module -e "import('@lickybuay/builderdash/seed').then((m) => console.log(JSON.stringify(m.builderSeedSchema(), null, 2)))"
 ```
 
-Under `blockTypes`, add:
+- Add `fields` (`builder_layout`, `builder_styles`) to each collection you want
+  to build, for example `pages` and `posts`.
+- Add every entry of `blockTypes` (`builder_container`, `builder_heading`,
+  `builder_text`, `builder_image`, `builder_button`, `builder_divider`,
+  `builder_content_ref`, `builder_template_ref`) under the seed's `blockTypes`.
 
-```json
-{
-  "slug": "builder_container",
-  "label": "Container",
-  "category": "Builder",
-  "currentVersion": 1,
-  "versions": [{
-    "version": 1,
-    "fields": [
-      { "slug": "gap", "label": "Gap", "type": "select", "defaultValue": "md",
-        "validation": { "options": ["none", "sm", "md", "lg"] } },
-      { "slug": "direction", "label": "Direction", "type": "select", "defaultValue": "column",
-        "validation": { "options": ["column", "row"] } },
-      { "slug": "parent_key", "label": "Parent", "type": "string",
-        "validation": { "maxLength": 32 } }
-    ]
-  }]
-},
-{
-  "slug": "builder_content_ref",
-  "label": "Content block",
-  "category": "Builder",
-  "currentVersion": 1,
-  "versions": [{
-    "version": 1,
-    "fields": [
-      { "slug": "ref_key", "label": "Content block", "type": "string",
-        "validation": { "maxLength": 64 } },
-      { "slug": "parent_key", "label": "Parent", "type": "string",
-        "validation": { "maxLength": 32 } }
-    ]
-  }]
-}
-```
+`builderdash-setup` does exactly this, merging with what your seed already has.
 
 ### 3. Apply the schema to an existing database
 
 ```bash
 npx emdash seed seed/seed.json --no-content
 ```
+
+This creates what the database does not have yet. It does **not** change
+definitions that already exist: on a site set up with an older BuilderDash, the
+`builder_layout` field keeps its old list of allowed block types and saving a
+newer element fails ("is not allowed by this field"). Start from a fresh local
+database, or update that field's allowed block types in EmDash.
 
 ## Open the builder
 
@@ -289,6 +267,24 @@ the import and the allowed block types.
 - `<main class="builderdash" data-bd-id="…" data-bd-slug="…" data-bd-collection="…">`.
 - Each element: CSS ID and classes from the Inspector's **Extra** tab.
 
+## Status & roadmap
+
+BuilderDash is an **alpha** and is being built in the open. It works today for
+building pages and templates in a local EmDash site; expect the data format
+and the API to change before 1.0.
+
+Next up:
+
+- The `templates` collection created by `builderdash-setup` (today the site's
+  seed has to declare it).
+- More elements (columns/grid, icon, video, spacer) and Elementor-style
+  layout presets for a new container.
+- Upgrading the schema of a site installed with an older version.
+- A supported EmDash hook for the "Create" button, so the builder opens without
+  intercepting the admin's navigation.
+
+Ideas and bug reports are welcome in [Issues](https://github.com/lickybuay/builderdash/issues).
+
 ## Development
 
 ```bash
@@ -304,6 +300,10 @@ To try your changes in a site, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Issues and pull requests are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 Report security problems privately, as described in [SECURITY.md](SECURITY.md).
+
+## Author
+
+Made by [Sergio Ballestero](https://github.com/lickybuay).
 
 ## License
 
