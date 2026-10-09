@@ -23,6 +23,7 @@ import { PLUGIN_ID } from "../plugin-id";
 import type { NodeType } from "../schema/types";
 import { missingLabel } from "../render/styles";
 import { LiveCanvas } from "./canvas/LiveCanvas";
+import { nativeEditUrl } from "./new-entry-redirect";
 import { copyNode, copyStyle, readClipboard, styleWithoutId } from "./clipboard";
 import { ContextMenu, type ContextMenuItem } from "./context-menu/ContextMenu";
 import { elementShortcut, type ElementShortcut } from "./context-menu/shortcuts";
@@ -462,8 +463,25 @@ function BuilderShell({
 	// A block with an empty required field would make the server reject the
 	// whole save (layout included), so it is caught here and pointed at.
 	const [checkError, setCheckError] = React.useState<string | null>(null);
+	// The layout must be complete before it is stored: a Template element with
+	// no template picked would save an empty reference. Selects the culprit.
+	const layoutProblem = (): string | null => {
+		let empty: BuilderNode | null = null;
+		walk(builder.tree, (node) => {
+			if (!empty && node.type === "template_ref" && !String(node.props.ref_id ?? "").trim()) empty = node;
+		});
+		if (!empty) return null;
+		builder.select((empty as BuilderNode).key);
+		return i18n._("Template: choose the template it embeds before saving.");
+	};
+
 	const handleSave = React.useCallback(async () => {
 		setCheckError(null);
+		const problem = layoutProblem();
+		if (problem) {
+			setCheckError(problem);
+			throw new Error(problem);
+		}
 		if (builder.contentTouched) {
 			for (const block of builder.content) {
 				const type = blockTypes.known.find((candidate) => candidate.slug === block._type);
@@ -512,6 +530,12 @@ function BuilderShell({
 	// to the builder with the new entry ID so the entry loads and the shell
 	// switches to edit mode.
 	const handleCreate = React.useCallback(async () => {
+		setCheckError(null);
+		const problem = layoutProblem();
+		if (problem) {
+			setCheckError(problem);
+			return;
+		}
 		const currentTitle = title || i18n._("Untitled");
 		const slug = currentTitle
 			.toLowerCase()
@@ -782,32 +806,38 @@ function BuilderShell({
 								{i18n._("View page")}
 							</Button>
 						)}
-						<Button
-							type="button"
-							size="sm"
-							variant="secondary"
-							disabled={!dirty || saving || publishing}
-							onClick={() => void handleSave().catch(() => undefined)}
-						>
-							{saving && !publishing
-								? i18n._("Saving…")
-								: dirty
-									? i18n._("Save")
-									: i18n._("Saved")}
-						</Button>
-						<Button
-							type="button"
-							size="sm"
-							variant="primary"
-							disabled={isNew || publishing || saving || (!dirty && draftStatus === "published")}
-							onClick={() => void handlePublish()}
-						>
-							{publishing
-								? i18n._("Publishing…")
-								: draftStatus === "unpublished"
-									? i18n._("Publish")
-									: i18n._("Publish changes")}
-						</Button>
+						{/* A new entry has one action, Create (a draft); Save and Publish
+						    only mean something once the entry exists. */}
+						{!isNew && (
+							<Button
+								type="button"
+								size="sm"
+								variant="secondary"
+								disabled={!dirty || saving || publishing}
+								onClick={() => void handleSave().catch(() => undefined)}
+							>
+								{saving && !publishing
+									? i18n._("Saving…")
+									: dirty
+										? i18n._("Save")
+										: i18n._("Saved")}
+							</Button>
+						)}
+						{!isNew && (
+							<Button
+								type="button"
+								size="sm"
+								variant="primary"
+								disabled={publishing || saving || (!dirty && draftStatus === "published")}
+								onClick={() => void handlePublish()}
+							>
+								{publishing
+									? i18n._("Publishing…")
+									: draftStatus === "unpublished"
+										? i18n._("Publish")
+										: i18n._("Publish changes")}
+							</Button>
+						)}
 					</div>
 					<button
 						type="button"
@@ -918,7 +948,6 @@ function BuilderShell({
 						<Palette
 								blockTypes={blockTypes.allowed}
 								onInsert={insertFromPalette}
-								onOpenInserter={() => setInserterOpen(true)}
 								focusToken={paletteFocus}
 							/>
 					) : selected ? (
@@ -928,7 +957,9 @@ function BuilderShell({
 							block={blockFor(selected)}
 							blockTypes={blockTypes.known}
 							title={labelFor(selected)}
-							editUrl={`/_emdash/admin/content/${encodeURIComponent(collection)}/${encodeURIComponent(entryId)}`}
+							// EmDash's own editor (not redirected back here) for the fields the builder does not edit.
+							editUrl={nativeEditUrl(collection, entryId)}
+							currentTemplateId={collection === "templates" && entryId ? entryId : null}
 							onEditContent={builder.editContent}
 							onDuplicate={() => elementActions.duplicate(selected.key)}
 							onRemove={() => elementActions.remove(selected.key)}
@@ -1191,21 +1222,18 @@ interface PaletteEntry {
 	category: string;
 	payload: DragPayload;
 	description?: string;
-	/** Special entry: opens a flow instead of inserting a node. */
+	/** Drawn with its own icon (the "Template" entry). */
 	action?: "templates";
 }
 
 function Palette({
 	blockTypes,
 	onInsert,
-	onOpenInserter,
 	focusToken = 0,
 }: {
 	/** The site's block types the page may use (Hero, FAQ…). */
 	blockTypes: BlockTypeDef[];
 	onInsert: (payload: DragPayload) => void;
-	/** Opens the template inserter, for the "Template" entry. */
-	onOpenInserter: () => void;
 	/** Each change focuses the search box (a "+" in the preview opened the panel). */
 	focusToken?: number;
 }): React.JSX.Element {
@@ -1235,8 +1263,10 @@ function Palette({
 				id: "templates",
 				label: i18n._("Template"),
 				category: i18n._("Reusable"),
-				description: i18n._("Insert a saved template"),
-				payload: { kind: "new", nodeType: "container" } as DragPayload,
+				// Elementor Pro's Template widget: a live reference, picked in
+				// the Inspector. The top bar's inserter copies one instead.
+				description: i18n._("Embed a saved template: drag it in, then pick it in the Inspector"),
+				payload: { kind: "new", nodeType: "template_ref" } as DragPayload,
 				action: "templates",
 			},
 		],
@@ -1271,7 +1301,7 @@ function Palette({
 						{shown
 							.filter((entry) => entry.category === category)
 							.map((entry) => (
-								<PaletteItem key={entry.id} entry={entry} onInsert={onInsert} onOpenInserter={onOpenInserter} />
+								<PaletteItem key={entry.id} entry={entry} onInsert={onInsert} />
 							))}
 					</ul>
 				</div>
@@ -1283,37 +1313,12 @@ function Palette({
 function PaletteItem({
 	entry,
 	onInsert,
-	onOpenInserter,
 }: {
 	entry: PaletteEntry;
 	onInsert: (payload: DragPayload) => void;
-	onOpenInserter: () => void;
 }): React.JSX.Element {
 	const { i18n } = useLingui();
 	const dragProps = useDragSource(entry.payload);
-
-	// The template entry opens the inserter instead of dropping a node: there
-	// is no single "template widget" to place, the user picks one.
-	if (entry.action === "templates") {
-		return (
-			<li>
-				<button
-					type="button"
-					onClick={onOpenInserter}
-					title={entry.description || i18n._("Insert a saved template")}
-					className="flex w-full cursor-pointer flex-col items-center gap-1 rounded-lg border border-kumo-line bg-kumo-control px-2 py-3 text-center transition-colors hover:border-kumo-fill-hover hover:bg-kumo-tint"
-				>
-					<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="text-kumo-subtle">
-						<rect x="3" y="3" width="7" height="7" rx="1" />
-						<rect x="14" y="3" width="7" height="7" rx="1" />
-						<rect x="3" y="14" width="7" height="7" rx="1" />
-						<rect x="14" y="14" width="7" height="7" rx="1" />
-					</svg>
-					<span className="text-xs font-medium text-kumo-strong">{entry.label}</span>
-				</button>
-			</li>
-		);
-	}
 
 	return (
 		<li>
@@ -1325,7 +1330,14 @@ function PaletteItem({
 				className="flex w-full cursor-grab flex-col items-center gap-1 rounded-lg border border-kumo-line bg-kumo-control px-2 py-3 text-center transition-colors hover:border-kumo-fill-hover hover:bg-kumo-tint"
 			>
 				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="text-kumo-subtle">
-					{entry.payload.kind === "new" && entry.payload.blockType ? (
+					{entry.action === "templates" ? (
+						<>
+							<rect x="3" y="3" width="7" height="7" rx="1" />
+							<rect x="14" y="3" width="7" height="7" rx="1" />
+							<rect x="3" y="14" width="7" height="7" rx="1" />
+							<rect x="14" y="14" width="7" height="7" rx="1" />
+						</>
+					) : entry.payload.kind === "new" && entry.payload.blockType ? (
 						<>
 							<rect x="3" y="4" width="18" height="16" rx="2" />
 							<path d="M7 9h10M7 13h6" />

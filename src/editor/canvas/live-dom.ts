@@ -160,6 +160,21 @@ function wrapperFor(doc: Document, node: BuilderNode): HTMLElement | null {
 	return null;
 }
 
+/**
+ * A template reference shows the template the SERVER rendered for it
+ * (`data-template-id`, set by `BuilderNode.astro`). Until a template is picked,
+ * or after picking another one, a notice takes its place (the edit-mode CSS
+ * turns `data-bd-missing` into a label and hides stale content) until
+ * LiveCanvas fetches the template's render and places it.
+ */
+function syncTemplateRef(wrapper: HTMLElement, node: BuilderNode): void {
+	const refId = String(node.props.ref_id ?? "");
+	const rendered = wrapper.getAttribute("data-template-id") === refId && wrapper.childElementCount > 0;
+	if (!refId) wrapper.setAttribute("data-bd-missing", "Choose a template in the Inspector");
+	else if (!rendered) wrapper.setAttribute("data-bd-missing", "Loading the template…");
+	else wrapper.removeAttribute("data-bd-missing");
+}
+
 /** Keeps a container's attributes in step with its props. */
 function syncContainer(wrapper: HTMLElement, node: BuilderNode): HTMLElement | null {
 	const box = wrapper.querySelector<HTMLElement>(`[data-bd-container="${CSS.escape(node.key)}"]`);
@@ -281,7 +296,7 @@ function place(
 			syncDivider(wrapper, node);
 		} else if (node.type === "template_ref") {
 			syncAttributes(wrapper, node);
-			place(doc, wrapper, node.children, seen);
+			syncTemplateRef(wrapper, node);
 		} else {
 			syncAttributes(wrapper, node);
 		}
@@ -298,9 +313,12 @@ export function applyTree(doc: Document, tree: BuilderTree): void {
 	const firstUnplaced = main.querySelector(":scope > [data-bd-ref]:not([data-bd-key])");
 	place(doc, main, tree, seen, firstUnplaced);
 
-	// Wrappers whose node left the tree are parked, not destroyed.
+	// Wrappers whose node left the tree are parked, not destroyed. Nodes the
+	// server rendered INSIDE a template reference belong to that template, not
+	// to this tree: they stay where they are.
 	for (const wrapper of Array.from(doc.querySelectorAll<HTMLElement>("[data-bd-key]"))) {
 		const key = wrapper.getAttribute("data-bd-key")!;
+		if (wrapper.parentElement?.closest('[data-bd-type="template_ref"]')) continue;
 		if (!seen.has(key) && wrapper.parentElement?.id !== HOLDER_ID) {
 			holder(doc).appendChild(wrapper);
 		}

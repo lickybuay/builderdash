@@ -549,6 +549,10 @@ export function LiveCanvas({
 			// this window would be false: check the shape instead.
 			const el = target as Element | null;
 			if (!el || typeof el.closest !== "function") return null;
+			// Inside an embedded template, the element to select is the
+			// reference itself: the template's own nodes are edited in the template.
+			const embedded = el.closest('[data-bd-type="template_ref"]');
+			if (embedded) return embedded.getAttribute("data-bd-key");
 			return el.closest("[data-bd-key]")?.getAttribute("data-bd-key") ?? null;
 		};
 
@@ -838,6 +842,66 @@ export function LiveCanvas({
 		applyStyles(doc, generateCss(tree, { edit: true }) + pageCssText(pageCss));
 		drawOverlay();
 	}, [tree, pageCss, missing, loadedAt, drawOverlay, ensureAppender]);
+
+	// A template picked for a Template element shows right away, before Save:
+	// its rendered markup and generated CSS are read from the site's template
+	// preview route (the same render the server does) and placed in the
+	// reference. Clicks inside still select the reference (see `keyAt`).
+	const embedded = React.useRef(new Map<string, Promise<{ html: string; css: string } | null>>());
+	React.useEffect(() => {
+		const doc = frameRef.current?.contentDocument;
+		if (!doc || !loadedAt) return;
+		const refs: Array<{ key: string; refId: string }> = [];
+		const visit = (nodes: BuilderTree) => {
+			for (const node of nodes) {
+				const refId = String(node.props.ref_id ?? "");
+				if (node.type === "template_ref" && refId) refs.push({ key: node.key, refId });
+				visit(node.children);
+			}
+		};
+		visit(tree);
+		let cancelled = false;
+		for (const { key, refId } of refs) {
+			const wrapper = doc.querySelector<HTMLElement>(`[data-bd-key="${CSS.escape(key)}"]`);
+			if (!wrapper) continue;
+			if (wrapper.getAttribute("data-template-id") === refId && wrapper.childElementCount > 0) continue;
+			let load = embedded.current.get(refId);
+			if (!load) {
+				load = fetch(`/template-preview?id=${encodeURIComponent(refId)}&_builder=1&_draft=1`)
+					.then((response) => (response.ok ? response.text() : null))
+					.then((text) => {
+						if (!text) return null;
+						const page = new DOMParser().parseFromString(text, "text/html");
+						const main = page.querySelector("main[data-bd-main]");
+						if (!main) return null;
+						return { html: main.innerHTML, css: page.getElementById("bd-styles")?.textContent ?? "" };
+					})
+					.catch(() => null);
+				embedded.current.set(refId, load);
+			}
+			void load.then((result) => {
+				if (cancelled || !result) return;
+				// The node may have been re-pointed meanwhile.
+				const current = findNode(latest.current.tree, key);
+				if (!current || String(current.props.ref_id ?? "") !== refId) return;
+				wrapper.innerHTML = result.html;
+				wrapper.setAttribute("data-template-id", refId);
+				wrapper.removeAttribute("data-bd-missing");
+				const styleId = `bd-embedded-${refId}`;
+				if (!doc.getElementById(styleId)) {
+					const style = doc.createElement("style");
+					style.id = styleId;
+					// Same text the server writes into <style>; `<` is never part of it.
+					style.textContent = result.css.replace(/</g, "");
+					doc.head.appendChild(style);
+				}
+				drawOverlay();
+			});
+		}
+		return () => {
+			cancelled = true;
+		};
+	}, [tree, loadedAt, drawOverlay]);
 
 	React.useEffect(() => {
 		drawOverlay();

@@ -488,6 +488,33 @@ NODE
 	fi
 fi
 
+# --- 3c. Template preview route (optional) -----------------------------------
+
+# Templates have no public URL: the builder previews them through this route.
+# Only for a site with a `templates` collection, and never over an existing one.
+if [ "$WITH_RENDER" -eq 1 ]; then
+	PREVIEW_ROUTE="src/pages/template-preview.astro"
+	HAS_TEMPLATES="$(SEED="$SEED" node -e '
+		const seed = JSON.parse(require("node:fs").readFileSync(process.env.SEED, "utf8"));
+		console.log((seed.collections || []).some((c) => c.slug === "templates") ? 1 : 0);
+	' 2>/dev/null || echo 0)"
+	if [ "$HAS_TEMPLATES" != "1" ]; then
+		: # No templates collection: nothing to preview.
+	elif [ -f "$PREVIEW_ROUTE" ]; then
+		ok "$PREVIEW_ROUTE already exists, left untouched."
+	else
+		SCRIPT_PATH="$(node -e 'console.log(require("node:fs").realpathSync(process.argv[1]))' "$0")"
+		PREVIEW_TEMPLATE="$(dirname "$SCRIPT_PATH")/templates/template-preview.astro"
+		if [ -f "$PREVIEW_TEMPLATE" ]; then
+			mkdir -p "$(dirname "$PREVIEW_ROUTE")"
+			cp "$PREVIEW_TEMPLATE" "$PREVIEW_ROUTE"
+			ok "Created $PREVIEW_ROUTE (template previews; add your layout for site chrome)."
+		else
+			warn "Template preview route not found at $PREVIEW_TEMPLATE."
+		fi
+	fi
+fi
+
 # --- 4. Validate / apply -----------------------------------------------------
 
 if [ -x node_modules/.bin/emdash ]; then

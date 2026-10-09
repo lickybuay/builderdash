@@ -180,6 +180,25 @@ carried over to the builder.
 Only the template collection is redirected; every other collection keeps
 EmDash's own create flow.
 
+### Templates in the builder
+
+- In the Templates list, the title and the pencil open the builder. EmDash's own
+  editor (category, display target, revisions…) stays reachable from the
+  Inspector's edit link, or with `?native=1` on the entry URL.
+- A new template shows a single **Create** button: it creates the draft and
+  reopens the builder; **Save** and **Publish** appear once it exists.
+- The **Template** element (Reusable) embeds a saved template by reference, like
+  Elementor Pro's Template widget: drag it in, pick the template in the
+  Inspector, and it shows right away. Editing that template updates every page
+  that embeds it. The top bar's inserter copies a template instead.
+- A template can never embed itself, directly or through another (A → B → A):
+  the picker leaves those out, and the render stops a loop, nests at most 5
+  levels and expands at most 50 templates per page.
+- `builderdash-setup --with-render` also creates `src/pages/template-preview.astro`
+  when your seed has a `templates` collection: the route the builder previews
+  templates through. It has no site chrome; add your layout, header and footer
+  to see templates as they will look.
+
 ## Render on your site
 
 The builder edits the layout; your site decides where it renders. Three small

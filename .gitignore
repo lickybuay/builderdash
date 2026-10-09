@@ -17,3 +17,14 @@ Thumbs.db
 # Local agent files (the shared rules in .claude/rules/ are tracked)
 .claude/settings.local.json
 .claude/handoff/
+
+# Never commit a local site's data or secrets (when an EmDash site runs here)
+.env
+.env.*
+!.env.example
+data.db
+data.db-*
+uploads/
+.emdash/
+.astro/
+.playwright-mcp/

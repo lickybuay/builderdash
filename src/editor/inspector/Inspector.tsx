@@ -25,6 +25,7 @@ import { optionsOf, type BlockFieldDef, type BlockTypeDef } from "../store/block
 import type { AdvancedValues, Breakpoint, BuilderNode, StyleValues } from "../store/tree";
 import { ExtraTab, StylingTab } from "./StyleControls";
 import { ColorField, ThemeTokens } from "./ValueFields";
+import { embeddableTemplates, useTemplates } from "../templates/useTemplates";
 
 /** A content block as stored in the entry's `content` field. */
 export type StoredContentBlock = Record<string, unknown> & {
@@ -83,6 +84,8 @@ interface InspectorProps {
 	tokens: string[];
 	onUpdateStyle: (target: Breakpoint | "advanced", patch: Record<string, unknown>) => void;
 	onBack: () => void;
+	/** The template being edited, when the entry is one: never offered to embed. */
+	currentTemplateId?: string | null;
 }
 
 const humanize = (slug: string) =>
@@ -234,6 +237,73 @@ const buttonClass =
 
 const inputClass =
 	"w-full rounded border border-kumo-line bg-kumo-control px-2 py-1.5 text-xs text-kumo-default";
+
+/**
+ * The template a Template element embeds, as Elementor Pro's Template widget:
+ * a searchable list of saved templates instead of a raw ID. Drafts are marked
+ * (the site renders only published ones); the template being edited and any
+ * that already contains it are left out, so a reference can never loop.
+ */
+function TemplatePicker({
+	value,
+	currentId,
+	onChange,
+}: {
+	value: string;
+	currentId: string | null;
+	onChange: (value: string) => void;
+}): React.JSX.Element {
+	const { i18n } = useLingui();
+	const { data, isLoading, isError } = useTemplates();
+	const [query, setQuery] = React.useState("");
+	const needle = query.trim().toLocaleLowerCase();
+	const offered = embeddableTemplates(data ?? [], currentId).filter(
+		(template) => !needle || template.title.toLocaleLowerCase().includes(needle),
+	);
+	const selected = (data ?? []).find((template) => template.id === value);
+	const draft = (template: { status?: string }) => template.status && template.status !== "published";
+	return (
+		<div className="flex flex-col gap-1">
+			<label htmlFor="bd-field-ref_id" className="text-xs font-medium text-kumo-subtle">
+				{i18n._("Template")}
+			</label>
+			<input
+				type="search"
+				value={query}
+				onChange={(event) => setQuery(event.target.value)}
+				placeholder={i18n._("Search templates…")}
+				aria-label={i18n._("Search templates")}
+				className="w-full rounded border border-kumo-line bg-kumo-control px-2 py-1.5 text-xs text-kumo-default"
+			/>
+			<select
+				id="bd-field-ref_id"
+				value={value}
+				onChange={(event) => onChange(event.target.value)}
+				className="w-full rounded border border-kumo-line bg-kumo-control px-2 py-1.5 text-xs text-kumo-default"
+			>
+				<option value="">{isLoading ? i18n._("Loading…") : i18n._("Choose a template")}</option>
+				{/* The current pick stays visible even when filtered out or gone. */}
+				{value && !offered.some((template) => template.id === value) ? (
+					<option value={value}>{selected ? selected.title : i18n._("Missing template")}</option>
+				) : null}
+				{offered.map((template) => (
+					<option key={template.id} value={template.id}>
+						{draft(template) ? i18n._("{title} (draft)", { title: template.title }) : template.title}
+					</option>
+				))}
+			</select>
+			{isError ? <span className="text-xs text-kumo-danger">{i18n._("The templates could not be loaded.")}</span> : null}
+			{selected && draft(selected) ? (
+				<span className="text-xs text-kumo-warning">
+					{i18n._("This template is a draft: the site shows it once it is published.")}
+				</span>
+			) : null}
+			<span className="text-xs text-kumo-subtle">
+				{i18n._("Linked: editing the template updates every page that embeds it.")}
+			</span>
+		</div>
+	);
+}
 
 /** A color prop (a container's background): the shared color field, theme tokens included. */
 function ColorControl({
@@ -494,6 +564,7 @@ export function Inspector({
 	breakpoint,
 	tokens,
 	onUpdateStyle,
+	currentTemplateId = null,
 }: InspectorProps): React.JSX.Element {
 	const [tab, setTab] = React.useState<"general" | "styling" | "extra">("general");
 	const { i18n } = useLingui();
@@ -611,15 +682,24 @@ export function Inspector({
 				<p className="px-3 py-4 text-xs text-kumo-subtle">{i18n._("Nothing to edit.")}</p>
 			) : (
 				<div className="flex flex-col gap-3 px-3 py-3">
-					{fields.map((field) => (
-						<FieldControl
-							key={field.slug}
-							field={field}
-							value={valueOf(field.slug)}
-							onChange={(value) => change(field.slug, value)}
-							editUrl={editUrl}
-						/>
-					))}
+					{fields.map((field) =>
+						node.type === "template_ref" && field.slug === "ref_id" ? (
+							<TemplatePicker
+								key={field.slug}
+								value={typeof valueOf(field.slug) === "string" ? String(valueOf(field.slug)) : ""}
+								currentId={currentTemplateId}
+								onChange={(value) => change(field.slug, value)}
+							/>
+						) : (
+							<FieldControl
+								key={field.slug}
+								field={field}
+								value={valueOf(field.slug)}
+								onChange={(value) => change(field.slug, value)}
+								editUrl={editUrl}
+							/>
+						),
+					)}
 					<p className="text-xs text-kumo-subtle">
 						{i18n._("Changes show in the preview and are stored when you save.")}
 					</p>

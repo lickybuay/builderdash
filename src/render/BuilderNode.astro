@@ -5,6 +5,7 @@
 
 import type { BuilderNode as Node } from "../editor/store/tree";
 import { cssColor, elementAttributes, missingLabel } from "./styles";
+import { newExpansionBudget } from "./parts";
 import { deserializeEntry, type StoredBlock, type StoredStyles } from "../editor/store/serialize";
 
 interface Props {
@@ -16,9 +17,29 @@ interface Props {
 	edit?: boolean;
 	/** Templates map: template ID → its stored layout and styles. */
 	templates?: Map<string, { layout: unknown[]; styles: unknown }>;
+	/**
+	 * Template IDs already being expanded on the way down to this node. A
+	 * template that references itself, directly or through another (A → B →
+	 * A), would otherwise recurse until the page render crashes.
+	 */
+	expanding?: readonly string[];
+	/** Expansions left for the whole render (shared, mutated): see `newExpansionBudget`. */
+	budget?: { left: number };
 }
 
-const { node, blocks, byKey, available = null, edit = false, templates } = Astro.props;
+/** Deepest template-in-template nesting rendered. */
+const MAX_TEMPLATE_DEPTH = 5;
+
+const {
+	node,
+	blocks,
+	byKey,
+	available = null,
+	edit = false,
+	templates,
+	expanding = [],
+	budget = newExpansionBudget(),
+} = Astro.props;
 const Blocks = blocks as any;
 const block = node.type === "content_ref" ? byKey.get(String(node.props.ref_key)) : undefined;
 // Extra settings (CSS ID, classes) land on the element the node's styles hit:
@@ -56,7 +77,16 @@ const missing = block && available && !available.has(block._type) ? missingLabel
 				}
 			>
 				{node.children.map((child) => (
-					<Astro.self node={child} blocks={blocks} byKey={byKey} available={available} edit={edit} />
+					<Astro.self
+						node={child}
+						blocks={blocks}
+						byKey={byKey}
+						available={available}
+						edit={edit}
+						templates={templates}
+						expanding={expanding}
+						budget={budget}
+					/>
 				))}
 			</div>
 		</div>
@@ -165,16 +195,24 @@ const missing = block && available && !available.has(block._type) ? missingLabel
 			data-template-id={String(node.props.ref_id ?? "")}
 		>
 			{(() => {
-				const source = templates?.get(String(node.props.ref_id));
-				if (!source) {
-					return edit ? (
-						<div class="bd-element" data-bd-missing="Template not found">
+				const refId = String(node.props.ref_id ?? "");
+				// Editor-only notices; the public page renders nothing in their place.
+				const notice = (text: string) =>
+					edit ? (
+						<div class="bd-element" data-bd-missing={text}>
 							<span style="display:block;margin:1rem;padding:1.5rem;border:2px dashed #f59e0b;border-radius:8px;color:#b45309;background:#fffbeb;font:600 14px/1.4 system-ui,sans-serif;text-align:center;">
-								Template not found
+								{text}
 							</span>
 						</div>
 					) : null;
+				if (!refId) return notice("Choose a template in the Inspector");
+				if (expanding.includes(refId) || expanding.length >= MAX_TEMPLATE_DEPTH) {
+					return notice("Circular template: it contains itself");
 				}
+				const source = templates?.get(refId);
+				if (!source) return notice("Template not found");
+				if (budget.left <= 0) return notice("Too many embedded templates on this page");
+				budget.left -= 1;
 				// Rebuild the template's own tree so nested containers keep their
 				// hierarchy: a flat list would drop every child into the wrapper.
 				const { tree: templateTree } = deserializeEntry(
@@ -189,6 +227,8 @@ const missing = block && available && !available.has(block._type) ? missingLabel
 						available={available}
 						edit={edit}
 						templates={templates}
+						expanding={[...expanding, refId]}
+						budget={budget}
 					/>
 				));
 			})()}

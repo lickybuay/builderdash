@@ -55,6 +55,39 @@ export interface TemplateSummary {
 	 * inserter's thumbnail without shipping the whole layout to the list.
 	 */
 	layoutTypes?: string[];
+	/** Publication status ("published", "draft"…): only published ones render on the site. */
+	status?: string;
+	/** IDs of the templates this one references live (`template_ref`), for cycle checks. */
+	refIds?: string[];
+}
+
+/**
+ * Templates a template-reference picker may offer while editing `currentId`:
+ * not the template itself, nor any template that already contains it, even
+ * through another (A → B → A would loop). Header/footer/sidebar parts are
+ * placed by the site, not embedded. `currentId` is null outside a template.
+ */
+export function embeddableTemplates(
+	templates: readonly TemplateSummary[],
+	currentId: string | null,
+): TemplateSummary[] {
+	const parts = new Set(["header", "footer", "sidebar"]);
+	const candidates = templates.filter((template) => !parts.has(template.display_target ?? ""));
+	if (!currentId) return candidates;
+	// Everything that reaches `currentId` by following references.
+	const reaches = new Set<string>([currentId]);
+	let grew = true;
+	while (grew) {
+		grew = false;
+		for (const template of templates) {
+			if (reaches.has(template.id)) continue;
+			if ((template.refIds ?? []).some((ref) => reaches.has(ref))) {
+				reaches.add(template.id);
+				grew = true;
+			}
+		}
+	}
+	return candidates.filter((template) => !reaches.has(template.id));
 }
 
 /** Full template with content blocks. */
@@ -70,13 +103,25 @@ export interface TemplateWithContent extends TemplateSummary {
 // API helpers
 // ---------------------------------------------------------------------------
 
+/** Most templates read for the pickers (pages of 100). */
+const TEMPLATES_MAX = 1000;
+
 async function fetchTemplates(): Promise<TemplateSummary[]> {
-	const response = await apiFetch(`/_emdash/api/content/${COLLECTION}`);
-	const data = await parseApiResponse<{ items: Record<string, unknown>[] }>(
-		response,
-		"Failed to load templates",
-	);
-	return (data.items ?? []).map((item) => {
+	// Every page, not just the first: a template past it could not be picked.
+	const items: Record<string, unknown>[] = [];
+	let cursor: string | undefined;
+	do {
+		const query = new URLSearchParams({ limit: "100" });
+		if (cursor) query.set("cursor", cursor);
+		const response = await apiFetch(`/_emdash/api/content/${COLLECTION}?${query.toString()}`);
+		const data = await parseApiResponse<{ items: Record<string, unknown>[]; nextCursor?: string | null }>(
+			response,
+			"Failed to load templates",
+		);
+		items.push(...(data.items ?? []));
+		cursor = typeof data.nextCursor === "string" && data.nextCursor ? data.nextCursor : undefined;
+	} while (cursor && items.length < TEMPLATES_MAX);
+	return items.map((item) => {
 		const fields = (item.data ?? {}) as Record<string, unknown>;
 		const layout = Array.isArray(fields.builder_layout) ? fields.builder_layout : [];
 		const layoutTypes = layout
@@ -84,8 +129,14 @@ async function fetchTemplates(): Promise<TemplateSummary[]> {
 				? ((block as Record<string, unknown>)._type as string)
 				: ""))
 			.filter(Boolean);
+		const refIds = layout
+			.filter((block) => (block as Record<string, unknown>)._type === "builder_template_ref")
+			.map((block) => String((block as Record<string, unknown>).ref_id ?? ""))
+			.filter(Boolean);
 		return {
 			id: item.id as string,
+			status: typeof item.status === "string" ? item.status : undefined,
+			refIds,
 			title: (fields.title as string) ?? "",
 			category: (fields.category as string) ?? "General",
 			css_id: fields.css_id as string | undefined,

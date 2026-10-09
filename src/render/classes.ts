@@ -29,6 +29,11 @@ function singular(collection: string): string {
 	return token(collection).replace(/s$/, "");
 }
 
-export function bodyClasses(entry: EntryRef): string[] {
+/**
+ * Classes for the entry. A route whose entry does not exist (a missing page,
+ * an empty database) passes no id: it gets no classes instead of a crash.
+ */
+export function bodyClasses(entry: Partial<EntryRef> | null | undefined): string[] {
+	if (!entry || typeof entry.id !== "string" || !entry.id || typeof entry.collection !== "string") return [];
 	return [`${singular(entry.collection)}-${token(entry.id, false)}`];
 }

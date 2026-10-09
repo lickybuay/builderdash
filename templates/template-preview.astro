@@ -1,0 +1,101 @@
+---
+/**
+ * Live preview of ONE template, for BuilderDash's canvas.
+ *
+ * Copied into `src/pages/template-preview.astro` by `builderdash-setup
+ * --with-render` when the site has a `templates` collection. Templates have no
+ * public URL, so the builder renders them through this route:
+ *
+ *   /template-preview?id=<ULID>   that template (the DRAFT, while it is built)
+ *   /template-preview             an empty layout: the blank canvas of a new one
+ *
+ * Either way there is a real `main[data-bd-main]` for the editor to drop into.
+ *
+ * This generic version has no site chrome. To preview templates with your
+ * header, footer and styles, wrap the layout in your site's layout component
+ * and pass `header`, `footer` and `blocks` to BuilderLayout, as your page route
+ * does.
+ */
+
+import BuilderLayout from "@lickybuay/builderdash/BuilderLayout.astro";
+import { builderEditMode } from "@lickybuay/builderdash/edit-mode";
+
+export const prerender = false;
+
+// Editor furniture only: never a public view of a template's structure.
+if (!Astro.locals.user) return Astro.rewrite("/404");
+
+// A preview reflects the draft, so it must never be cached.
+Astro.response.headers.set("Cache-Control", "no-store");
+
+interface ContentItem {
+	id: string;
+	data?: {
+		title?: string;
+		content?: unknown[];
+		builder_layout?: unknown[];
+		builder_styles?: Record<string, unknown>;
+	};
+}
+
+/** Reads through the admin API with the request's own cookie (drafts included). */
+async function read<T>(path: string): Promise<T | null> {
+	const cookie = Astro.request.headers.get("cookie") ?? "";
+	const response = await fetch(new URL(path, Astro.url.origin), {
+		headers: { cookie, "X-EmDash-Request": "1" },
+	});
+	if (!response.ok) return null;
+	const body = (await response.json()) as { data?: T };
+	return body.data ?? null;
+}
+
+const id = Astro.url.searchParams.get("id");
+
+// An id that does not resolve is a hard 404; no id is the blank canvas.
+let template: ContentItem | null = null;
+if (id) {
+	template = (await read<{ item: ContentItem }>(`/_emdash/api/content/templates/${encodeURIComponent(id)}`))?.item ?? null;
+	if (!template) return Astro.rewrite("/404");
+}
+
+// Templates this one references (Template elements) resolve through this map.
+const templates = new Map<string, { layout: unknown[]; styles: unknown }>();
+if (template) {
+	let cursor: string | undefined;
+	let pages = 0;
+	do {
+		const query = new URLSearchParams({ limit: "100" });
+		if (cursor) query.set("cursor", cursor);
+		const page = await read<{ items: ContentItem[]; nextCursor?: string | null }>(
+			`/_emdash/api/content/templates?${query.toString()}`,
+		);
+		for (const item of page?.items ?? []) {
+			const layout = item.data?.builder_layout;
+			if (Array.isArray(layout) && layout.length > 0) {
+				templates.set(item.id, { layout, styles: item.data?.builder_styles ?? {} });
+			}
+		}
+		cursor = page?.nextCursor || undefined;
+		pages += 1;
+	} while (cursor && pages < 10);
+}
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex" />
+		<title>{template?.data?.title ?? "New template"}</title>
+	</head>
+	<body>
+		<BuilderLayout
+			layout={template?.data?.builder_layout ?? []}
+			styles={template?.data?.builder_styles ?? {}}
+			content={template?.data?.content as Array<{ _key: string; _type: string }> | undefined}
+			edit={builderEditMode(Astro)}
+			templates={templates}
+		/>
+	</body>
+</html>

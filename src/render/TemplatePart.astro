@@ -21,6 +21,7 @@
 import { deserializeEntry, type StoredBlock, type StoredStyles } from "../editor/store/serialize";
 import type { BuilderTree } from "../editor/store/tree";
 import BuilderNode from "./BuilderNode.astro";
+import { newExpansionBudget } from "./parts";
 import { generateCss, pageCssText } from "./styles";
 
 interface Props {
@@ -52,7 +53,8 @@ const collect = (nodes: BuilderTree) => {
 collect(tree);
 
 const available = blockTypes ? new Set(blockTypes) : null;
-const shared = { blocks, byKey, available, edit, templates };
+// One expansion budget for the whole render (see BuilderNode's MAX_TEMPLATE_EXPANSIONS).
+const shared = { blocks, byKey, available, edit, templates, budget: newExpansionBudget() };
 ---
 
 <div class="bd-template-part" data-bd-part style="display: contents">

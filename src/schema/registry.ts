@@ -158,21 +158,23 @@ export const WIDGETS: readonly WidgetDefinition[] = [
 	{
 		// A reference to a reusable template from the Templates collection.
 		//
-		// Internal: inserting a template COPIES its widgets into the document
-		// (see `insertSubtree`), which is what the inserter promises. A live
-		// reference would need a re-fetch on every render, so it stays out of
-		// the palette and is kept only so existing refs and old saves still
-		// round-trip.
+		// A live reference, like Elementor Pro's Template widget: dragged from
+		// the palette's "Template" entry (not listed by category: see
+		// `internal`), the template is picked in the Inspector and rendered by
+		// reference, so editing the template updates every page that uses it.
+		// The template inserter (top bar) COPIES a template instead.
+		//
+		// Not a container: its content is the referenced template's, so
+		// children dropped on it would be stored and never rendered.
 		type: "template_ref",
 		label: "Template",
 		icon: "squares",
 		category: "Content",
 		internal: true,
 		topLevel: true,
-		container: true,
-		accepts: ["container", "heading", "text", "image", "button", "divider"],
 		fields: [
-			{ slug: "ref_id", label: "Template ID", type: "string", required: true },
+			// Empty until a template is picked (no label placeholder: an ID).
+			{ slug: "ref_id", label: "Template", type: "string", required: true, default: "" },
 			{ slug: "css_id", label: "CSS ID", type: "string" },
 			{ slug: "css_classes", label: "CSS Classes", type: "string" },
 		],

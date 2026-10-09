@@ -77,3 +77,16 @@ function isNewer(candidate: TemplatePartInput, current: TemplatePartInput): bool
 	if (candidate.updatedAt !== current.updatedAt) return candidate.updatedAt > current.updatedAt;
 	return candidate.id > current.id;
 }
+
+/**
+ * Most template references expanded in ONE page render. Depth and cycles are
+ * capped per branch; this caps the breadth: a template embedding another many
+ * times, which embeds another many times… would otherwise multiply the work of
+ * every public request.
+ */
+export const MAX_TEMPLATE_EXPANSIONS = 50;
+
+/** A fresh, shared budget for one render (mutated as references expand). */
+export function newExpansionBudget(): { left: number } {
+	return { left: MAX_TEMPLATE_EXPANSIONS };
+}

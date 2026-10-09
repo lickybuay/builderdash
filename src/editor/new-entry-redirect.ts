@@ -1,6 +1,9 @@
 /**
- * Open the builder when EmDash's admin creates a TEMPLATE, instead of its
- * default content editor.
+ * Open the builder when EmDash's admin creates or edits a TEMPLATE, instead of
+ * its default content editor: the list's "Add New", its title links and its
+ * pencil all land in the builder (EmDash has no hook to hide or retarget them).
+ * EmDash's editor stays reachable with `?native=1` (`nativeEditUrl`), for the
+ * fields the builder does not edit.
  *
  * Why an interception and not a hook: the content list's create button is a
  * router link to `/content/{collection}/new` (the admin's `ContentNewPage`), and
@@ -31,20 +34,43 @@ const TEMPLATE_COLLECTIONS: ReadonlySet<string> = new Set(["templates"]);
 
 /** The admin's new-entry pathname for a collection. */
 const NEW_ENTRY = /^\/_emdash\/admin\/content\/([^/]+)\/new\/?$/;
+/**
+ * The admin's edit pathname for one entry (the list's title link and pencil).
+ * Exactly `/content/<collection>/<id>` with an id-shaped segment (EmDash ids
+ * are ULIDs): sub-routes and word segments (`trash`…) stay EmDash's.
+ */
+const EDIT_ENTRY = /^\/_emdash\/admin\/content\/([^/]+)\/([0-9A-Za-z_-]{10,})\/?$/;
+/**
+ * Query flag that keeps EmDash's own editor for a template, for the fields the
+ * builder does not edit (category, display target, revisions…).
+ */
+export const NATIVE_EDITOR_PARAM = "native";
 
 /** The builder's new-entry URL: no `id`, so the shell shows a blank canvas. */
 export function builderNewEntryUrl(collection: string): string {
 	return `/_emdash/admin/plugins/${encodeURIComponent(PLUGIN_ID)}/builder?collection=${encodeURIComponent(collection)}`;
 }
 
+/** The builder's URL for an existing entry. */
+export function builderEditUrl(collection: string, entryId: string): string {
+	return `${builderNewEntryUrl(collection)}&id=${encodeURIComponent(entryId)}`;
+}
+
+/** EmDash's own editor for an entry, kept reachable (see `NATIVE_EDITOR_PARAM`). */
+export function nativeEditUrl(collection: string, entryId: string): string {
+	return `/_emdash/admin/content/${encodeURIComponent(collection)}/${encodeURIComponent(entryId)}?${NATIVE_EDITOR_PARAM}=1`;
+}
+
 let installed = false;
 
 /**
- * The collection a same-origin new-entry URL points at, or null. Other origins,
- * and the path appearing only in a query or hash, never match. A malformed
- * escape is treated as no match rather than thrown into the router.
+ * Where a same-origin admin URL for a template should go instead: the
+ * builder's blank canvas for "new", the builder for an entry's edit link.
+ * `null` leaves the navigation alone: other origins, other collections, a path
+ * only in the query or hash, sub-routes, the native-editor escape, and a
+ * malformed escape (never thrown into the router).
  */
-function collectionOf(url: string): string | null {
+function builderTargetOf(url: string): string | null {
 	let parsed: URL;
 	try {
 		parsed = new URL(url, window.location.href);
@@ -52,19 +78,26 @@ function collectionOf(url: string): string | null {
 		return null;
 	}
 	if (parsed.origin !== window.location.origin) return null;
-	const match = NEW_ENTRY.exec(parsed.pathname);
-	if (!match) return null;
 	try {
-		return decodeURIComponent(match[1]!);
+		const created = NEW_ENTRY.exec(parsed.pathname);
+		if (created) {
+			const collection = decodeURIComponent(created[1]!);
+			return TEMPLATE_COLLECTIONS.has(collection) ? builderNewEntryUrl(collection) : null;
+		}
+		const edited = EDIT_ENTRY.exec(parsed.pathname);
+		if (edited && !parsed.searchParams.has(NATIVE_EDITOR_PARAM)) {
+			const collection = decodeURIComponent(edited[1]!);
+			return TEMPLATE_COLLECTIONS.has(collection) ? builderEditUrl(collection, decodeURIComponent(edited[2]!)) : null;
+		}
 	} catch {
 		return null;
 	}
+	return null;
 }
 
 function maybeRedirect(url: string): void {
-	const collection = collectionOf(url);
-	if (!collection || !TEMPLATE_COLLECTIONS.has(collection)) return;
-	window.location.assign(builderNewEntryUrl(collection));
+	const target = builderTargetOf(url);
+	if (target) window.location.assign(target);
 }
 
 /**
@@ -89,10 +122,10 @@ export function installNewEntryRedirect(): void {
 			const anchor = event.target.closest("a[href]");
 			if (!(anchor instanceof HTMLAnchorElement)) return;
 			if (anchor.target && anchor.target !== "_self") return;
-			const collection = collectionOf(anchor.href);
-			if (!collection || !TEMPLATE_COLLECTIONS.has(collection)) return;
+			const target = builderTargetOf(anchor.href);
+			if (!target) return;
 			event.preventDefault();
-			window.location.assign(builderNewEntryUrl(collection));
+			window.location.assign(target);
 		},
 		true,
 	);
