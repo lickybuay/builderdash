@@ -2,6 +2,8 @@
 # esbuild); everything else stays off so strictDepBuilds (pnpm 11) passes.
 allowBuilds:
   esbuild: true
+  # Pulled in by astro/emdash (peers); the plugin's tools never need it.
+  sharp: false
 
 # Supply-chain hardening: cooldown on brand-new releases (EmDash exempt)
 # and no non-registry transitive sources.
