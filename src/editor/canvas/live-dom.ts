@@ -14,7 +14,7 @@
  * Pure DOM: no React. Works on any `Document`, so it is testable in jsdom.
  */
 
-import { elementAttributes } from "../../render/styles";
+import { cssColor, elementAttributes } from "../../render/styles";
 import type { BuilderNode, BuilderTree } from "../store/tree";
 
 const HOLDER_ID = "bd-removed-holder";
@@ -166,12 +166,8 @@ function syncContainer(wrapper: HTMLElement, node: BuilderNode): HTMLElement | n
 	if (!box) return null;
 	box.setAttribute("data-gap", String(node.props.gap ?? "md"));
 	box.setAttribute("data-direction", String(node.props.direction ?? "column"));
-	const bg = node.props.background_color;
-	if (typeof bg === "string" && bg.trim()) {
-		box.style.backgroundColor = bg;
-	} else {
-		box.style.backgroundColor = "";
-	}
+	// Same validation as the server render: what the preview shows is what ships.
+	box.style.backgroundColor = cssColor(node.props.background_color) ?? "";
 	return box;
 }
 

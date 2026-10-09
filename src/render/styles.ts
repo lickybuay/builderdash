@@ -35,20 +35,148 @@ export const TEXT_STYLED_TYPES: ReadonlySet<string> = new Set(["container", "hea
 
 const BARE_NUMBER = /^-?\d+(\.\d+)?$/;
 
+// ---------------------------------------------------------------------------
+// Value validators, shared by the CSS generator, the inline styles, the canvas
+// projection and the Inspector's own inline validation (see
+// `.claude/rules/color-fields.md` and `value-fields.md`). Each returns the CSS
+// value to write, or `null` when it must be dropped.
+// ---------------------------------------------------------------------------
+
+/** Keyword sizes accepted where a length is. */
+const SIZE_KEYWORD = /^(auto|fit-content|min-content|max-content)$/;
+/** Functions a "custom" length may use; anything else (url(), expression()…) is rejected. */
+const CUSTOM_FUNCTIONS: ReadonlySet<string> = new Set(["calc", "min", "max", "clamp", "var"]);
+const CUSTOM_MAX = 200;
+
+/**
+ * A "custom" length, as Elementor's custom unit: `calc()`, `min()`, `max()`,
+ * `clamp()` over lengths, numbers and `var(--token)`. Only those functions,
+ * balanced parentheses, and no character that could end the declaration.
+ */
+export function cssExpression(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	if (trimmed === "" || trimmed.length > CUSTOM_MAX) return null;
+	if (!/^(calc|min|max|clamp)\(/.test(trimmed)) return null;
+	if (!/^[a-z0-9.%+\-*/,\s()]+$/i.test(trimmed)) return null;
+	for (const match of trimmed.matchAll(/([a-z-]+)\(/gi)) {
+		if (!CUSTOM_FUNCTIONS.has(match[1]!.toLowerCase())) return null;
+	}
+	// var() only as var(--name).
+	for (const match of trimmed.matchAll(/var\(([^)]*)\)/gi)) {
+		if (!/^--[a-z0-9-]+$/i.test(match[1]!.trim())) return null;
+	}
+	// A comment would swallow the rules after it (another node's `hide`).
+	if (/\/\*|\*\//.test(trimmed)) return null;
+	// One function call: the outer parenthesis closes exactly at the end, so
+	// nothing trails it (`calc(1px) url`).
+	let depth = 0;
+	for (let i = 0; i < trimmed.length; i++) {
+		const char = trimmed[i];
+		if (char === "(") depth += 1;
+		else if (char === ")") depth -= 1;
+		if (depth < 0) return null;
+		if (depth === 0 && char === ")" && i !== trimmed.length - 1) return null;
+	}
+	return depth === 0 ? trimmed : null;
+}
+
 /**
  * A validated length. A bare number means pixels, as in Elementor (`20` →
  * `20px`): unitless lengths are invalid CSS and the browser would silently
- * drop the declaration.
+ * drop the declaration. `negative: false` rejects negatives (padding, sizes,
+ * border width, radius).
  */
-const length = (value: unknown): string | null => {
+export function cssLength(value: unknown, options: { negative?: boolean } = {}): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
 	if (TOKEN.test(trimmed)) return trimmed;
+	if (SIZE_KEYWORD.test(trimmed)) return trimmed;
+	const expression = cssExpression(trimmed);
+	if (expression) return expression;
 	if (!LENGTH.test(trimmed)) return null;
+	if (options.negative === false && trimmed.startsWith("-")) return null;
 	return BARE_NUMBER.test(trimmed) && Number(trimmed) !== 0 ? `${trimmed}px` : trimmed;
-};
-const color = (value: unknown) =>
-	typeof value === "string" && (COLOR.test(value) || TOKEN.test(value)) ? value : null;
+}
+
+/** A color: hex (3–8 digits), rgb(a)/hsl(a), transparent, currentColor or var(--token). */
+export function cssColor(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return COLOR.test(trimmed) || TOKEN.test(trimmed) ? trimmed : null;
+}
+
+/** Font weight: 100–900, normal/bold, or a theme token. */
+export function cssWeight(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return WEIGHT.test(trimmed) || /^(normal|bold)$/.test(trimmed) || TOKEN.test(trimmed) ? trimmed : null;
+}
+
+/** Line height: a unitless number (preferred), a non-negative length, `normal` or a token. */
+export function cssLineHeight(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	if (NUMBER.test(trimmed) || trimmed === "normal" || TOKEN.test(trimmed)) return trimmed;
+	if (trimmed === "auto") return null;
+	return cssLength(trimmed, { negative: false });
+}
+
+/** z-index: an integer (negatives allowed). */
+export function cssZIndex(value: unknown): string | null {
+	return typeof value === "string" && INTEGER.test(value.trim()) ? value.trim() : null;
+}
+
+/**
+ * Box shadow: `none`, a theme token, or one or more layers of
+ * `[inset] x y [blur] [spread] [color]`, each part validated on its own.
+ */
+export function cssShadow(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	if (trimmed === "none" || TOKEN.test(trimmed)) return trimmed;
+	if (trimmed === "" || trimmed.length > CUSTOM_MAX * 2) return null;
+	const layers = splitTopLevel(trimmed, ",");
+	if (!layers) return null;
+	for (const layer of layers) {
+		const parts = splitTopLevel(layer.trim(), " ");
+		if (!parts) return null;
+		let lengths = 0;
+		let colors = 0;
+		let inset = 0;
+		for (const part of parts.filter(Boolean)) {
+			if (part === "inset") inset += 1;
+			else if (cssColor(part) && !LENGTH.test(part)) colors += 1;
+			else if (cssLength(part)) lengths += 1;
+			else return null;
+		}
+		if (inset > 1 || colors > 1 || lengths < 2 || lengths > 4) return null;
+	}
+	return trimmed;
+}
+
+/** Splits on `separator` outside parentheses; `null` when they do not balance. */
+function splitTopLevel(text: string, separator: string): string[] | null {
+	const parts: string[] = [];
+	let depth = 0;
+	let current = "";
+	for (const char of text) {
+		if (char === "(") depth += 1;
+		else if (char === ")") depth -= 1;
+		if (depth < 0) return null;
+		if (char === separator && depth === 0) {
+			parts.push(current);
+			current = "";
+		} else current += char;
+	}
+	if (depth !== 0) return null;
+	parts.push(current);
+	return parts;
+}
+
+const length = (value: unknown) => cssLength(value);
+const positive = (value: unknown) => cssLength(value, { negative: false });
+const color = cssColor;
 
 /** Declarations for one style set, validated. */
 function declarations(style: StyleValues | undefined, node: BuilderNode): string[] {
@@ -62,40 +190,30 @@ function declarations(style: StyleValues | undefined, node: BuilderNode): string
 		[style.padding, "padding"],
 	] as const) {
 		if (!box) continue;
-		push(`${prefix}-top`, length(box.t));
-		push(`${prefix}-right`, length(box.r));
-		push(`${prefix}-bottom`, length(box.b));
-		push(`${prefix}-left`, length(box.l));
+		// Margins may be negative; padding never.
+		const side = prefix === "margin" ? length : positive;
+		push(`${prefix}-top`, side(box.t));
+		push(`${prefix}-right`, side(box.r));
+		push(`${prefix}-bottom`, side(box.b));
+		push(`${prefix}-left`, side(box.l));
 	}
-	push("width", length(style.size?.width));
-	push("max-width", length(style.size?.maxWidth));
-	push("min-height", length(style.size?.height));
+	push("width", positive(style.size?.width));
+	push("max-width", positive(style.size?.maxWidth));
+	push("min-height", positive(style.size?.height));
 	push("background", color(style.background));
-	push("border-width", length(style.border?.width));
-	if (length(style.border?.width)) out.push("border-style:solid");
-	push("border-radius", length(style.border?.radius));
+	push("border-width", positive(style.border?.width));
+	if (positive(style.border?.width)) out.push("border-style:solid");
+	push("border-radius", positive(style.border?.radius));
 	push("border-color", color(style.border?.color));
-	push(
-		"box-shadow",
-		typeof style.shadow === "string" && (TOKEN.test(style.shadow) || style.shadow === "none")
-			? style.shadow
-			: null,
-	);
+	push("box-shadow", cssShadow(style.shadow));
 	const align = style.typography?.align;
 	push("text-align", typeof align === "string" && ALIGN.test(align) ? align : null);
 
 	if (TEXT_STYLED_TYPES.has(node.type)) {
 		push("color", color(style.color));
-		push("font-size", length(style.typography?.size));
-		const weight = style.typography?.weight;
-		push("font-weight", typeof weight === "string" && WEIGHT.test(weight) ? weight : null);
-		const lineHeight = style.typography?.lineHeight;
-		push(
-			"line-height",
-			typeof lineHeight === "string" && (NUMBER.test(lineHeight) || LENGTH.test(lineHeight))
-				? lineHeight
-				: null,
-		);
+		push("font-size", positive(style.typography?.size));
+		push("font-weight", cssWeight(style.typography?.weight));
+		push("line-height", cssLineHeight(style.typography?.lineHeight));
 		push("letter-spacing", length(style.typography?.letterSpacing));
 	}
 	return out;
@@ -152,9 +270,8 @@ export function generateCss(tree: BuilderTree, options: { edit?: boolean } = {})
 		const selector = selectorFor(node);
 		const desktop = declarations(node.style.desktop, node);
 		const advanced: AdvancedValues | undefined = node.style.advanced;
-		if (typeof advanced?.zIndex === "string" && INTEGER.test(advanced.zIndex)) {
-			desktop.push(`position:relative`, `z-index:${advanced.zIndex}`);
-		}
+		const zIndex = cssZIndex(advanced?.zIndex);
+		if (zIndex !== null) desktop.push(`position:relative`, `z-index:${zIndex}`);
 		if (desktop.length > 0) base.push(`${selector}{${desktop.join(";")}}`);
 		for (const breakpoint of ["tablet", "mobile"] as const) {
 			const rules = declarations(node.style[breakpoint], node);

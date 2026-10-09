@@ -24,6 +24,7 @@ import { requireWidget } from "../../schema/registry";
 import { optionsOf, type BlockFieldDef, type BlockTypeDef } from "../store/block-values";
 import type { AdvancedValues, Breakpoint, BuilderNode, StyleValues } from "../store/tree";
 import { ExtraTab, StylingTab } from "./StyleControls";
+import { ColorField, ThemeTokens } from "./ValueFields";
 
 /** A content block as stored in the entry's `content` field. */
 export type StoredContentBlock = Record<string, unknown> & {
@@ -234,6 +235,7 @@ const buttonClass =
 const inputClass =
 	"w-full rounded border border-kumo-line bg-kumo-control px-2 py-1.5 text-xs text-kumo-default";
 
+/** A color prop (a container's background): the shared color field, theme tokens included. */
 function ColorControl({
 	id,
 	label,
@@ -245,30 +247,15 @@ function ColorControl({
 	value: unknown;
 	onChange: (value: unknown) => void;
 }): React.JSX.Element {
-	const hex = typeof value === "string" && value ? value : "#000000";
+	const tokens = React.useContext(ThemeTokens);
 	return (
-		<div className="flex flex-col gap-1">
-			<label htmlFor={id} className="text-xs font-medium text-kumo-subtle">
-				{label}
-			</label>
-			<div className="flex items-center gap-2">
-				<input
-					id={id}
-					type="color"
-					value={hex}
-					onChange={(event) => onChange(event.target.value)}
-					className="size-8 cursor-pointer rounded border border-kumo-line bg-transparent p-0.5"
-				/>
-				<input
-					type="text"
-					className={inputClass}
-					value={hex}
-					onChange={(event) => onChange(event.target.value)}
-					onFocus={(event) => event.target.select()}
-					placeholder="#000000"
-				/>
-			</div>
-		</div>
+		<ColorField
+			id={id}
+			label={label}
+			tokens={tokens}
+			value={typeof value === "string" && value ? value : undefined}
+			onChange={onChange}
+		/>
 	);
 }
 
@@ -532,6 +519,7 @@ export function Inspector({
 	};
 
 	return (
+		<ThemeTokens.Provider value={tokens}>
 		<aside
 			id="bd-sidebar"
 			aria-label={i18n._("Inspector")}
@@ -603,6 +591,8 @@ export function Inspector({
 
 			{tab === "styling" ? (
 				<StylingTab
+					// Units and modes chosen in a field belong to one device.
+					key={breakpoint}
 					node={node}
 					breakpoint={breakpoint}
 					tokens={tokens}
@@ -636,5 +626,6 @@ export function Inspector({
 				</div>
 			)}
 		</aside>
+		</ThemeTokens.Provider>
 	);
 }

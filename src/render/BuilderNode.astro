@@ -4,7 +4,7 @@
  */
 
 import type { BuilderNode as Node } from "../editor/store/tree";
-import { elementAttributes, missingLabel } from "./styles";
+import { cssColor, elementAttributes, missingLabel } from "./styles";
 import { deserializeEntry, type StoredBlock, type StoredStyles } from "../editor/store/serialize";
 
 interface Props {
@@ -51,9 +51,8 @@ const missing = block && available && !available.has(block._type) ? missingLabel
 				data-gap={String(node.props.gap ?? "md")}
 				data-direction={String(node.props.direction ?? "column")}
 				style={
-					typeof node.props.background_color === "string" && node.props.background_color.trim()
-						? `background-color:${node.props.background_color}`
-						: undefined
+					// Validated: free text here would be CSS injection.
+					cssColor(node.props.background_color) ? `background-color:${cssColor(node.props.background_color)}` : undefined
 				}
 			>
 				{node.children.map((child) => (
