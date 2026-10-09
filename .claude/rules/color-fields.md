@@ -15,7 +15,7 @@ one) — follows these rules. No color field is a bare text input or a bare
 
 ## Editing
 
-- Use the shared `ColorField` (`src/editor/inspector/ColorField.tsx`).
+- Use the shared `ColorField` (`src/editor/inspector/ValueFields.tsx`).
   It gives: a swatch that opens the native color picker, a free-text input, and
   a clear (×) button.
 - The text input accepts every format the validator accepts:
