@@ -1,0 +1,12 @@
+# Build scripts: allow only what the dev tools need (vitest/tsdown use
+# esbuild); everything else stays off so strictDepBuilds (pnpm 11) passes.
+allowBuilds:
+  esbuild: true
+
+# Supply-chain hardening: cooldown on brand-new releases (EmDash exempt)
+# and no non-registry transitive sources.
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - emdash
+  - "@emdash-cms/*"
+blockExoticSubdeps: true

@@ -58,7 +58,7 @@ Summary; the detail is in `01-decisions.md`.
 
 **Current stage: the skeleton — in progress, steps 1 to 9 completed.**
 
-The package lives in `plugin-builderdash/` (pnpm workspace). The specification is in
+The package lives at the root of this repository. The specification is in
 `05-milestone-1-setup.md`. Session history is in `06-dev-log.md`.
 
 The stage tests a single thing: **the overall structure with the container as the only

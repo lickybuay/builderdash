@@ -35,12 +35,25 @@ Visual page builder plugin for [EmDash](https://github.com/emdash-cms/emdash), i
 
 ## Quick install
 
-From the root of your EmDash site:
+From the root of your EmDash site, with the package manager you use:
 
 ```bash
+# pnpm
 pnpm add github:lickybuay/builderdash
 pnpm exec builderdash-setup --with-render
+
+# npm
+npm install github:lickybuay/builderdash
+npx builderdash-setup --with-render
+
+# yarn
+yarn add github:lickybuay/builderdash
+yarn builderdash-setup --with-render
 ```
+
+Pin a version with a tag, for example `github:lickybuay/builderdash#v0.1.0`. With Yarn
+Berry (2+), Git dependencies are packed by running their install, which takes longer;
+pnpm or npm are the quickest way to try it.
 
 The package ships built: installing it runs no build script, so pnpm's build-script allowlist needs no entry for it.
 
@@ -59,7 +72,7 @@ Then restart the dev server.
 
 ## Manual configure
 
-Install the package (`pnpm add github:lickybuay/builderdash`; it ships built, no install script runs), then:
+Install the package (`pnpm add github:lickybuay/builderdash`, `npm install github:lickybuay/builderdash` or `yarn add github:lickybuay/builderdash`; it ships built, no install script runs), then:
 
 ### 1. Register the plugin
 
@@ -258,5 +271,16 @@ the import and the allowed block types.
 pnpm install
 pnpm typecheck
 pnpm test
+pnpm build
 ```
 
+To try your changes in a site, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Contributing
+
+Issues and pull requests are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+Report security problems privately, as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © Sergio Ballestero

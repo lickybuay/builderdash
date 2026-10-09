@@ -70,7 +70,7 @@ And also:
 ## File structure
 
 ```
-plugin-builderdash/
+(repository root)
 ├── package.json                     exports ., ./admin
 ├── tsconfig.json
 └── src/
@@ -122,7 +122,7 @@ the plugin must be compiled before bringing up the site.
 
 ```bash
 # 1. Compile the plugin (once, or in watch mode)
-cd plugin-builderdash && npx tsdown src/index.ts --format esm --dts --clean
+npx tsdown src/index.ts --format esm --dts --clean
 
 # 2. Declare the workspace link (only once)
 cd .. && pnpm add -w "@lickybuay/builderdash@workspace:*"

@@ -14,5 +14,6 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Local agent files
-.claude/
+# Local agent files (the shared rules in .claude/rules/ are tracked)
+.claude/settings.local.json
+.claude/handoff/
