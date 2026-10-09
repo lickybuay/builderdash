@@ -34,7 +34,11 @@ import {
 	type BuilderTree,
 	type Breakpoint,
 	type MoveIntent,
+	type StyleByBreakpoint,
+	walk,
 } from "./tree";
+import { canContain } from "../../schema/registry";
+import { styleWithoutId } from "../clipboard";
 import {
 	deserializeEntry,
 	serializeTree,
@@ -129,6 +133,24 @@ export interface BuilderActions {
 		parentKey: string | null,
 		index?: number,
 	) => string | null;
+	/**
+	 * Pastes nodes (a copy or a duplicate) with fresh keys. Each content block
+	 * in `contentBlocks` is copied under a fresh `_key` and the refs remapped, so
+	 * the paste never shares a block with its source; a ref without its block is
+	 * dropped. CSS IDs are not carried. With `wrapAtRoot`, a widget pasted at the
+	 * root gets its container. One undo step. Returns the first pasted key.
+	 */
+	pasteSubtree: (
+		nodes: readonly BuilderNode[],
+		contentBlocks: readonly ContentBlockValue[],
+		parentKey: string | null,
+		index?: number,
+		options?: { wrapAtRoot?: boolean },
+	) => string | null;
+	/** Removes a node, its subtree and every content block the subtree places. */
+	removeSubtree: (key: string) => void;
+	/** Replaces a node's whole style (Paste style; `{}` resets it). */
+	setStyle: (key: string, style: StyleByBreakpoint) => void;
 	/** Replaces the page's custom CSS. */
 	setPageCss: (css: string) => void;
 	undo: () => void;
@@ -362,7 +384,9 @@ export function useBuilder(
 				const style = findNode(state.tree, removedKey)?.style;
 				if (style && Object.keys(style).length > 0) styles[removedKey] = style;
 			}
-			commitTree(nextTree, state.selectedKey === key ? null : undefined, styles);
+			// A selection inside the removed subtree would point at a node that is gone.
+			const selectionGone = state.selectedKey !== null && removedKeys.includes(state.selectedKey);
+			commitTree(nextTree, selectionGone ? null : undefined, styles);
 		},
 
 		duplicate: (key) => {
@@ -524,6 +548,100 @@ export function useBuilder(
 				select: cloned[0]!.key,
 			});
 			return cloned[0]!.key;
+		},
+
+		pasteSubtree: (nodes, contentBlocks, parentKey, index, options) => {
+			if (nodes.length === 0) return null;
+			const { nodes: cloned } = cloneSubtreeWithMap(nodes, parentKey);
+
+			// Fresh content keys; refs follow them. A ref whose block is not
+			// among `contentBlocks` cannot be placed and is dropped.
+			const contentKeys = new Map<string, string>();
+			const copies: ContentBlockValue[] = [];
+			for (const block of contentBlocks) {
+				if (contentKeys.has(block._key)) continue;
+				const copy = { ...block, _key: newContentKey() };
+				contentKeys.set(block._key, copy._key);
+				copies.push(copy);
+			}
+			const remap = (list: BuilderNode[]): BuilderNode[] =>
+				list
+					.filter((node) => node.type !== "content_ref" || contentKeys.has(String(node.props.ref_key)))
+					.map((node) => ({
+						...node,
+						style: styleWithoutId(node.style),
+						props:
+							node.type === "content_ref"
+								? { ...node.props, ref_key: contentKeys.get(String(node.props.ref_key)) }
+								: node.props,
+						children: remap(node.children),
+					}));
+			let roots = remap(cloned);
+
+			// At the root, a widget gets its container (as a drop does).
+			if (parentKey === null && options?.wrapAtRoot) {
+				roots = roots.map((node) => {
+					if (node.type === "container" || !canContain("container", node.type)) return node;
+					const wrapper = createNode("container", null);
+					return { ...wrapper, children: [{ ...node, parent: wrapper.key }] };
+				});
+			}
+
+			let tree: BuilderTree = state.tree;
+			let at = index;
+			for (const node of roots) {
+				const next = insertNode(tree, node, parentKey, at);
+				if (next === tree) return null;
+				tree = next;
+				at = at === undefined ? undefined : at + 1;
+			}
+			if (roots.length === 0) return null;
+			// Keep only the copies the pasted refs use.
+			const used = new Set<string>();
+			walk(roots, (node) => {
+				if (node.type === "content_ref") used.add(String(node.props.ref_key));
+			});
+			const added = copies.filter((block) => used.has(block._key));
+
+			dispatch({
+				type: "commit",
+				next: { ...current(), tree, content: added.length > 0 ? [...state.content, ...added] : state.content },
+				select: roots[0]!.key,
+				touchesContent: added.length > 0,
+			});
+			return roots[0]!.key;
+		},
+
+		removeSubtree: (key) => {
+			const node = findNode(state.tree, key);
+			if (!node) return;
+			const { tree: nextTree, removedKeys } = removeNode(state.tree, key);
+			const refs = new Set<string>();
+			const styles = { ...state.orphanStyles };
+			walk([node], (descendant) => {
+				if (descendant.type === "content_ref") refs.add(String(descendant.props.ref_key));
+				if (Object.keys(descendant.style).length > 0) styles[descendant.key] = descendant.style;
+			});
+			const selectionGone = state.selectedKey !== null && removedKeys.includes(state.selectedKey);
+			dispatch({
+				type: "commit",
+				next: {
+					...current(),
+					tree: nextTree,
+					orphanStyles: styles,
+					content: refs.size > 0 ? state.content.filter((block) => !refs.has(block._key)) : state.content,
+				},
+				select: selectionGone ? null : undefined,
+				touchesContent: refs.size > 0,
+			});
+		},
+
+		setStyle: (key, style) => {
+			if (!findNode(state.tree, key)) return;
+			dispatch({
+				type: "commit",
+				next: { ...current(), tree: updateNodeStyle(state.tree, key, style) },
+			});
 		},
 
 		setPageCss: (css) => {

@@ -23,11 +23,14 @@ import { PLUGIN_ID } from "../plugin-id";
 import type { NodeType } from "../schema/types";
 import { missingLabel } from "../render/styles";
 import { LiveCanvas } from "./canvas/LiveCanvas";
+import { copyNode, copyStyle, readClipboard, styleWithoutId } from "./clipboard";
+import { ContextMenu, type ContextMenuItem } from "./context-menu/ContextMenu";
+import { elementShortcut, type ElementShortcut } from "./context-menu/shortcuts";
 import { DetailsPanel } from "./details/DetailsPanel";
 import { useDragSource, type DragPayload, type DropTarget } from "./dnd/index";
 import { FloatingPanel } from "./navigator/FloatingPanel";
 import { Navigator } from "./navigator/Navigator";
-import { findNode, type BuilderNode, type BuilderTree } from "./store/tree";
+import { findNode, walk, type BuilderNode, type BuilderTree } from "./store/tree";
 import { deserializeEntry, type StoredBlock, type StoredStyles } from "./store/serialize";
 import { createBlockValue, fieldsOf, missingRequired, type BlockTypeDef } from "./store/block-values";
 import { fetchTemplate } from "./templates/useTemplates";
@@ -37,7 +40,13 @@ import {
 	type ContentBlock,
 } from "./store/content";
 import { Inspector, type StoredContentBlock } from "./inspector/Inspector";
-import { initialStateFrom, newContentKey, nodeCount, useBuilder } from "./store/useBuilder";
+import {
+	initialStateFrom,
+	newContentKey,
+	nodeCount,
+	useBuilder,
+	type ContentBlockValue,
+} from "./store/useBuilder";
 import { TemplateInserter } from "./template-inserter/TemplateInserter";
 import { SaveAsTemplateModal } from "./save-as-template/SaveAsTemplateModal";
 import {
@@ -230,9 +239,45 @@ function BuilderShell({
 	// Nothing selected (a click outside any element): the palette shows, ready
 	// to add. Selecting an element shows its settings; the palette steps aside.
 	const showPalette = adding || !selected;
+	// Where the next palette click lands when a "+" in the preview asked for a
+	// spot (end of page, above a container, inside an empty one). Null: the
+	// click follows the selection (`clickTarget`).
+	const [insertAt, setInsertAt] = React.useState<DropTarget | null>(null);
+	// Set when a "+" selects a node itself, so the effect below keeps the panel.
+	const keepAdding = React.useRef(false);
 	React.useEffect(() => {
+		if (keepAdding.current) {
+			keepAdding.current = false;
+			return;
+		}
 		if (builder.selectedKey) setAdding(false);
+		setInsertAt(null);
 	}, [builder.selectedKey]);
+	React.useEffect(() => {
+		if (!showPalette) setInsertAt(null);
+	}, [showPalette]);
+	// Bumped to focus the palette's search box; back to 0 once the spot is
+	// used or dropped, so a later remount of the palette does not steal focus.
+	const [paletteFocus, setPaletteFocus] = React.useState(0);
+	React.useEffect(() => {
+		if (!insertAt) setPaletteFocus(0);
+	}, [insertAt]);
+	const requestInsert = (target: DropTarget, select?: string) => {
+		if (select !== undefined && select !== builder.selectedKey) {
+			keepAdding.current = true;
+			builder.select(select);
+		}
+		setInsertAt(target);
+		setSidebarOpen(true);
+		setAdding(true);
+		setPaletteFocus((count) => count + 1);
+	};
+	// The hover tab's "+": an empty container at `target`, selected, with the
+	// elements panel open to fill it.
+	const addContainerAt = (target: DropTarget) => {
+		const key = builder.addNode("container", target.parentKey, target.index);
+		if (key) requestInsert({ parentKey: key, index: 0 }, key);
+	};
 	// The content blocks with every pending edit applied: what the Inspector
 	// shows, what the preview renders and what Save writes.
 	const mergedContent = builder.content as StoredContentBlock[];
@@ -275,6 +320,13 @@ function BuilderShell({
 	// or at the end of the page.
 	const insertFromPalette = (payload: DragPayload) => {
 		if (payload.kind !== "new") return;
+		if (insertAt) {
+			// A spot picked with a "+" in the preview: placed as a drop there
+			// would be (a widget at the root gets its container).
+			setInsertAt(null);
+			handleDrop(payload, insertAt);
+			return;
+		}
 		const at = clickTarget(builder.tree, selected);
 		if (payload.blockType) insertBlock(payload.blockType, at.parentKey, at.index);
 		else builder.addNode(payload.nodeType, at.parentKey, at.index);
@@ -491,6 +543,172 @@ function BuilderShell({
 		}
 	}, [collection, title, i18n, PLUGIN_ID, builder]);
 
+	// --- Element actions: the context menu, its shortcuts, the hover tab. ---
+	// Content refs place a block of the entry: duplicating or deleting one acts
+	// on the block too, and a container carries the blocks of its subtree.
+	const blocksIn = (node: BuilderNode) => {
+		const refs = new Set<string>();
+		walk([node], (current) => {
+			if (current.type === "content_ref") refs.add(String(current.props.ref_key));
+		});
+		return mergedContent.filter((block) => refs.has(block._key)) as ContentBlockValue[];
+	};
+	const slotAfter = (node: BuilderNode) => {
+		const siblings = node.parent === null ? builder.tree : (findNode(builder.tree, node.parent)?.children ?? []);
+		return siblings.findIndex((sibling) => sibling.key === node.key) + 1;
+	};
+	const elementActions = {
+		duplicate: (key: string) => {
+			const node = findNode(builder.tree, key);
+			if (!node) return;
+			if (node.type === "content_ref") builder.duplicateContent(key);
+			else builder.pasteSubtree([node], blocksIn(node), node.parent, slotAfter(node));
+		},
+		remove: (key: string) => {
+			const node = findNode(builder.tree, key);
+			if (!node) return;
+			if (node.type === "content_ref") builder.removeContent(key);
+			else builder.removeSubtree(key);
+		},
+		copy: (key: string) => {
+			const node = findNode(builder.tree, key);
+			if (node) copyNode(node, mergedContent as ContentBlockValue[]);
+		},
+		// Inside a container that accepts everything copied, else after the node.
+		paste: (key: string | null) => {
+			if (!blockTypes.ready) return;
+			const clip = readClipboard(blockTypes.allowed);
+			if (clip.nodes.length === 0) return;
+			const node = key ? findNode(builder.tree, key) : null;
+			if (!node) {
+				builder.pasteSubtree(clip.nodes, clip.content, null, undefined, { wrapAtRoot: true });
+				return;
+			}
+			const inside =
+				node.type === "container" && clip.nodes.every((copied) => canContain("container", copied.type));
+			if (inside) builder.pasteSubtree(clip.nodes, clip.content, node.key);
+			else builder.pasteSubtree(clip.nodes, clip.content, node.parent, slotAfter(node), { wrapAtRoot: true });
+		},
+		copyStyle: (key: string) => {
+			const node = findNode(builder.tree, key);
+			if (node) copyStyle(node);
+		},
+		// Only between elements of the same type: the style keys are the type's.
+		pasteStyle: (key: string) => {
+			const node = findNode(builder.tree, key);
+			const style = readClipboard(blockTypes.allowed).style;
+			if (!node || !style || style.type !== node.type) return;
+			builder.setStyle(key, styleWithoutId(style.style));
+		},
+		resetStyle: (key: string) => builder.setStyle(key, {}),
+	};
+
+	const [menu, setMenu] = React.useState<{
+		key: string;
+		x: number;
+		y: number;
+		returnFocus: HTMLElement | null;
+	} | null>(null);
+	const openMenu = (key: string, x: number, y: number, returnFocus?: HTMLElement | null) => {
+		builder.select(key);
+		setMenu({ key, x, y, returnFocus: returnFocus ?? (document.activeElement as HTMLElement | null) });
+	};
+	const closeMenu = React.useCallback(() => setMenu(null), []);
+	const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+	const shortcut = (keys: string, aria: string) => ({
+		label: mac ? keys : keys.replace("⌘", "Ctrl+").replace("⇧", "Shift+"),
+		aria: mac ? aria : aria.replace("Meta", "Control"),
+	});
+	const menuItems = (key: string): ContextMenuItem[] => {
+		const node = findNode(builder.tree, key);
+		const clip = readClipboard(blockTypes.allowed);
+		return [
+			{
+				id: "duplicate",
+				label: i18n._("Duplicate"),
+				shortcut: shortcut("⌘D", "Meta+D"),
+				run: () => elementActions.duplicate(key),
+			},
+			{
+				id: "copy",
+				label: i18n._("Copy"),
+				shortcut: shortcut("⌘C", "Meta+C"),
+				separated: true,
+				run: () => elementActions.copy(key),
+			},
+			{
+				id: "paste",
+				label: i18n._("Paste"),
+				shortcut: shortcut("⌘V", "Meta+V"),
+				disabled: !blockTypes.ready || clip.nodes.length === 0,
+				run: () => elementActions.paste(key),
+			},
+			{
+				id: "copy-style",
+				label: i18n._("Copy style"),
+				run: () => elementActions.copyStyle(key),
+			},
+			{
+				id: "paste-style",
+				label: i18n._("Paste style"),
+				shortcut: shortcut("⌘⇧V", "Meta+Shift+V"),
+				disabled: !clip.style || clip.style.type !== node?.type,
+				run: () => elementActions.pasteStyle(key),
+			},
+			{
+				id: "reset-style",
+				label: i18n._("Reset style"),
+				disabled: !node || Object.keys(node.style).length === 0,
+				run: () => elementActions.resetStyle(key),
+			},
+			{
+				id: "delete",
+				label: i18n._("Delete"),
+				shortcut: shortcut("⌫", "Delete"),
+				danger: true,
+				separated: true,
+				run: () => elementActions.remove(key),
+			},
+		];
+	};
+
+	/** A shortcut on the selected element, from the shell or the preview. */
+	const runShortcut = (action: ElementShortcut) => {
+		const key = builder.selectedKey;
+		if (!key) return;
+		if (action === "duplicate") elementActions.duplicate(key);
+		else if (action === "copy") elementActions.copy(key);
+		else if (action === "paste") elementActions.paste(key);
+		else if (action === "pasteStyle") elementActions.pasteStyle(key);
+		else if (action === "delete") elementActions.remove(key);
+	};
+	const runShortcutRef = React.useRef(runShortcut);
+	runShortcutRef.current = runShortcut;
+
+	React.useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			// Typing in a field, or focus inside the preview (it handles its own).
+			const active = document.activeElement as HTMLElement | null;
+			const editable =
+				!!active &&
+				(active.isContentEditable ||
+					active.tagName === "IFRAME" ||
+					["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName));
+			const action = elementShortcut(event, editable, window.getSelection());
+			// Delete/Backspace on a focused button or control is not meant for the
+			// element: only with focus on the page itself or a Structure row.
+			const deleteTarget =
+				!active || active === document.body || active.getAttribute("role") === "treeitem";
+			if (action === "delete" && !deleteTarget) return;
+			if (action) {
+				event.preventDefault();
+				runShortcutRef.current(action);
+			}
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, []);
+
 	// Ctrl/Cmd+S saves. Undo/redo keep the shortcuts people already have in
 	// their fingers; the buttons come with the fuller toolbar later.
 	React.useEffect(() => {
@@ -697,7 +915,12 @@ function BuilderShell({
 							) : null}
 							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
 					{showPalette ? (
-						<Palette blockTypes={blockTypes.allowed} onInsert={insertFromPalette} onOpenInserter={() => setInserterOpen(true)} />
+						<Palette
+								blockTypes={blockTypes.allowed}
+								onInsert={insertFromPalette}
+								onOpenInserter={() => setInserterOpen(true)}
+								focusToken={paletteFocus}
+							/>
 					) : selected ? (
 						<Inspector
 							key={selected.key}
@@ -707,16 +930,8 @@ function BuilderShell({
 							title={labelFor(selected)}
 							editUrl={`/_emdash/admin/content/${encodeURIComponent(collection)}/${encodeURIComponent(entryId)}`}
 							onEditContent={builder.editContent}
-							onDuplicate={() =>
-								selected.type === "content_ref"
-									? builder.duplicateContent(selected.key)
-									: builder.duplicate(selected.key)
-							}
-							onRemove={() =>
-								selected.type === "content_ref"
-									? builder.removeContent(selected.key)
-									: builder.remove(selected.key)
-							}
+							onDuplicate={() => elementActions.duplicate(selected.key)}
+							onRemove={() => elementActions.remove(selected.key)}
 							onUpdateProps={(patch) => builder.updateProps(selected.key, patch)}
 							breakpoint={builder.breakpoint}
 							tokens={tokens}
@@ -739,6 +954,11 @@ function BuilderShell({
 							selectedKey={builder.selectedKey}
 							onSelect={builder.select}
 							onDropPayload={handleDrop}
+							onRequestInsert={requestInsert}
+							onAddContainer={addContainerAt}
+							onRemove={elementActions.remove}
+							onContextMenu={(key, x, y) => openMenu(key, x, y, null)}
+							onShortcut={(action) => runShortcutRef.current(action)}
 							reloadToken={reloadToken}
 							onTokens={setTokens}
 							contentBlocks={mergedContent}
@@ -750,6 +970,12 @@ function BuilderShell({
 								failed: i18n._(
 									"The live preview is unavailable. Save the page, then reload.",
 								),
+								dropHere: i18n._("Drag widget here"),
+								add: i18n._("Add element"),
+								addContainer: i18n._("Add container above"),
+								move: i18n._("Drag to move"),
+								remove: i18n._("Delete"),
+								confirmRemove: i18n._("Delete?"),
 							}}
 						/>
 						{structureOpen && (
@@ -764,6 +990,7 @@ function BuilderShell({
 										onClose={() => setStructureOpen(false)}
 										labelFor={labelFor}
 										onRename={builder.renameNode}
+										onContextMenu={openMenu}
 										headerProps={handleProps}
 										minimized={!structureExpanded}
 										onToggleMinimized={() => setStructureExpanded(!structureExpanded)}
@@ -793,6 +1020,17 @@ function BuilderShell({
 						/>
 					)}
 				</div>
+
+				{menu && findNode(builder.tree, menu.key) ? (
+					<ContextMenu
+						x={menu.x}
+						y={menu.y}
+						label={i18n._("Element actions")}
+						items={menuItems(menu.key)}
+						onClose={closeMenu}
+						returnFocus={menu.returnFocus}
+					/>
+				) : null}
 
 				{/* Template inserter modal */}
 				<TemplateInserter
@@ -961,14 +1199,21 @@ function Palette({
 	blockTypes,
 	onInsert,
 	onOpenInserter,
+	focusToken = 0,
 }: {
 	/** The site's block types the page may use (Hero, FAQ…). */
 	blockTypes: BlockTypeDef[];
 	onInsert: (payload: DragPayload) => void;
 	/** Opens the template inserter, for the "Template" entry. */
 	onOpenInserter: () => void;
+	/** Each change focuses the search box (a "+" in the preview opened the panel). */
+	focusToken?: number;
 }): React.JSX.Element {
 	const { i18n } = useLingui();
+	const searchRef = React.useRef<HTMLInputElement | null>(null);
+	React.useEffect(() => {
+		if (focusToken > 0) searchRef.current?.focus();
+	}, [focusToken]);
 	const entries = React.useMemo<PaletteEntry[]>(
 		() => [
 			...widgetsByCategory().flatMap((group) =>
@@ -1006,6 +1251,7 @@ function Palette({
 		<div aria-label={i18n._("Blocks")} role="group">
 			<div className="border-b border-kumo-line px-3 py-2">
 				<input
+					ref={searchRef}
 					type="search"
 					value={filter}
 					onChange={(event) => setFilter(event.target.value)}

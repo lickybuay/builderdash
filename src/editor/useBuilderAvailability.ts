@@ -16,6 +16,9 @@ import { fetchManifest } from "@emdash-cms/admin";
 
 import type { BlockTypeDef } from "./store/block-values";
 import { BLOCKS_FIELD } from "./useBuilderEntry";
+import { blockTypeFor, knownTypes } from "../schema/registry";
+
+const LAYOUT_BLOCK_TYPES: ReadonlySet<string> = new Set(knownTypes().map(blockTypeFor));
 
 /**
  * Public URL of an entry, from the collection's `urlPattern` in the manifest
@@ -74,6 +77,8 @@ export function useContentBlockTypes(collection: string): {
 	allowed: BlockTypeDef[];
 	/** Every type the field knows, retired included: for the Inspector. */
 	known: BlockTypeDef[];
+	/** `false` while the manifest loads: nothing can be validated yet. */
+	ready: boolean;
 } {
 	const { data } = useQuery({ queryKey: ["manifest"], queryFn: fetchManifest });
 	const field = data?.collections[collection]?.fields?.[CONTENT_FIELD] as
@@ -81,8 +86,13 @@ export function useContentBlockTypes(collection: string): {
 		| undefined;
 	const known = field?.kind === "blocks" && Array.isArray(field.blockTypes) ? field.blockTypes : [];
 	const allowedSlugs = field?.validation?.allowedTypes;
+	// The builder's own layout types (`builder_container`…) are how the layout
+	// is stored, never site content: a `content` field that allows them (the
+	// templates collection does) would list every widget twice in the palette.
+	const offered = known.filter((type) => !LAYOUT_BLOCK_TYPES.has(type.slug));
 	return {
 		known,
-		allowed: Array.isArray(allowedSlugs) ? known.filter((type) => allowedSlugs.includes(type.slug)) : known,
+		ready: data !== undefined,
+		allowed: Array.isArray(allowedSlugs) ? offered.filter((type) => allowedSlugs.includes(type.slug)) : offered,
 	};
 }

@@ -161,7 +161,7 @@ export function setFrameTarget(target: DropTarget | null): void {
 	store.setActive(target ? (target.parentKey ?? "root") : null, target?.index ?? 0);
 }
 
-export { attachFrameDrop } from "./frame-drop";
+export { attachFrameDrop, resolveAt } from "./frame-drop";
 export type { FrameDropLine } from "./frame-drop";
 
 /** Test seam: resets the singleton between cases. */

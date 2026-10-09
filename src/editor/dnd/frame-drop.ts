@@ -127,6 +127,25 @@ function resolve(doc: Document, target: Element, clientY: number, tree: BuilderT
 	};
 }
 
+/**
+ * The drop target and insertion line under a point of the iframe, for drags
+ * driven by mouse events instead of native drag and drop (the container
+ * grip). The payload is the store's current one (`beginDrag`). Elements with
+ * `pointer-events: none` (the editor's overlay) are skipped by the hit test.
+ */
+export function resolveAt(
+	doc: Document,
+	clientX: number,
+	clientY: number,
+	tree: BuilderTree,
+): { target: DropTarget; line: FrameDropLine } | null {
+	// A native drag's payload never applies here.
+	cachedPayload = null;
+	const hit = doc.elementFromPoint(clientX, clientY);
+	if (!hit) return null;
+	return resolve(doc, hit, clientY, tree);
+}
+
 /** Wires drop handling on the iframe document. Returns a cleanup. */
 export function attachFrameDrop(doc: Document, options: FrameDropOptions): () => void {
 	let last: Resolved | null = null;

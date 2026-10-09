@@ -20,9 +20,10 @@ import * as React from "react";
 import { getPreviewUrl } from "@emdash-cms/admin";
 
 import type { BuilderNode, BuilderTree, Breakpoint } from "../store/tree";
-import { findNode } from "../store/tree";
+import { ancestorsOf, findNode } from "../store/tree";
 import {
 	attachFrameDrop,
+	resolveAt,
 	beginDrag,
 	currentDragPayload,
 	endDrag,
@@ -32,6 +33,7 @@ import {
 	type FrameDropLine,
 } from "../dnd/index";
 import { generateCss, pageCssText } from "../../render/styles";
+import { elementShortcut, type ElementShortcut } from "../context-menu/shortcuts";
 import { applyStyles, applyTree, markMissing, nodeRect, readTokens } from "./live-dom";
 
 interface LiveCanvasProps {
@@ -49,6 +51,22 @@ interface LiveCanvasProps {
 	onEditContent: (blockKey: string, field: string, value: unknown) => void;
 	/** A drop inside the preview: from the palette or a node's handle. */
 	onDropPayload: (payload: DragPayload, target: DropTarget) => void;
+	/**
+	 * A "+" in the preview: open the elements panel so the next element lands
+	 * at `target`. `select` is the node to select alongside (an empty container).
+	 */
+	onRequestInsert: (target: DropTarget, select?: string) => void;
+	/**
+	 * The "+" on a container's hover tab: a new empty container at `target`
+	 * (above the hovered one), as Elementor makes space for a new container.
+	 */
+	onAddContainer: (target: DropTarget) => void;
+	/** The "×" on a container's hover tab. */
+	onRemove: (key: string) => void;
+	/** Right-click on a node (or the Menu key): its context menu, at a point of the admin's viewport. */
+	onContextMenu: (key: string, x: number, y: number) => void;
+	/** An element shortcut typed while focus is inside the preview. */
+	onShortcut: (action: ElementShortcut) => void;
 	/** Content blocks with pending edits applied: what the preview must show. */
 	contentBlocks: ReadonlyArray<{ _key: string; _type: string }>;
 	/** Content blocks as stored: what the server render of the draft shows. */
@@ -60,7 +78,68 @@ interface LiveCanvasProps {
 	/** Label drawn on the selection badge. */
 	labelFor: (node: BuilderNode) => string;
 	/** Pre-resolved strings, so this component needs no i18n provider. */
-	strings: { loading: string; failed: string };
+	strings: {
+		loading: string;
+		failed: string;
+		/** The end-of-page placeholder's text ("Drag widget here"). */
+		dropHere: string;
+		/** "+" buttons: add an element. */
+		add: string;
+		/** The hover tab's "+": add a container above. */
+		addContainer: string;
+		/** The hover tab's drag handle. */
+		move: string;
+		/** The hover tab's "×". */
+		remove: string;
+		/** The "×" after one click: click again to delete. */
+		confirmRemove: string;
+	};
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** Inline icons for the canvas chrome, drawn with `currentColor`. */
+const ICONS = {
+	plus: "M8 3v10M3 8h10",
+	grip: "M6 4h.01M10 4h.01M6 8h.01M10 8h.01M6 12h.01M10 12h.01",
+	close: "M4 4l8 8M12 4l-8 8",
+} as const;
+
+function icon(doc: Document, name: keyof typeof ICONS): SVGSVGElement {
+	const svg = doc.createElementNS(SVG_NS, "svg");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("aria-hidden", "true");
+	const path = doc.createElementNS(SVG_NS, "path");
+	path.setAttribute("d", ICONS[name]);
+	svg.appendChild(path);
+	return svg;
+}
+
+/** Chrome the editor adds to the page: never a node, never a selection. */
+const CHROME = "#bd-overlay, #bd-appender";
+
+function inChrome(target: EventTarget | null): boolean {
+	// The node lives in the iframe's realm: check the shape, not `instanceof`.
+	const el = target as Element | null;
+	return !!el && typeof el.closest === "function" && el.closest(CHROME) !== null;
+}
+
+/** The container a hover over `key` belongs to: the node itself or its nearest container ancestor. */
+function containerAround(tree: BuilderTree, key: string): BuilderNode | null {
+	const node = findNode(tree, key);
+	if (!node) return null;
+	if (node.type === "container") return node;
+	const chain = ancestorsOf(tree, key);
+	for (let i = chain.length - 1; i >= 0; i--) {
+		if (chain[i]!.type === "container") return chain[i]!;
+	}
+	return null;
+}
+
+/** Where `node` sits: its parent and its index among its siblings. */
+function slotOf(tree: BuilderTree, node: BuilderNode): DropTarget {
+	const siblings = node.parent === null ? tree : (findNode(tree, node.parent)?.children ?? []);
+	return { parentKey: node.parent, index: Math.max(0, siblings.findIndex((sibling) => sibling.key === node.key)) };
 }
 
 /**
@@ -82,6 +161,27 @@ const OVERLAY_CSS = `
 #bd-overlay .bd-badge { position: absolute; transform: translateY(-100%); padding: 2px 8px; font: 600 11px/1.6 system-ui, sans-serif; color: #fff; background: #2563eb; border-radius: 4px 4px 0 0; white-space: nowrap; pointer-events: auto; cursor: grab; user-select: none; }
 #bd-drop-line { position: absolute; height: 4px; border-radius: 2px; background: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, .25); pointer-events: none; z-index: 2147483647; display: none; }
 [data-bd-edit] a, [data-bd-edit] button { cursor: default; }
+/* Container hover tab: "+" (add above), drag handle, "×". Sits inside the
+   container's top edge, so the pointer reaches it without leaving the container. */
+#bd-overlay .bd-tab { all: unset; position: absolute; transform: translateX(-50%); display: flex; gap: 2px; padding: 2px 10px; background: #2563eb; color: #fff; border-radius: 0 0 8px 8px; pointer-events: auto; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+#bd-overlay .bd-tab-button { all: unset; box-sizing: border-box; display: grid; place-items: center; width: 22px; height: 20px; border-radius: 4px; cursor: pointer; }
+#bd-overlay .bd-tab-button:hover { background: rgba(255,255,255,.2); }
+#bd-overlay .bd-tab-button.bd-tab-grip { cursor: grab; }
+#bd-overlay .bd-tab-button.bd-tab-confirm { display: flex; align-items: center; white-space: nowrap; width: auto; gap: 4px; padding: 0 6px; background: #dc2626; font: 600 11px/1 system-ui, sans-serif; }
+#bd-overlay .bd-tab-button.bd-tab-confirm:hover { background: #b91c1c; }
+#bd-overlay svg, #bd-appender svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; }
+/* While dragging, the canvas chrome must not swallow the drop. */
+[data-bd-dragging] #bd-overlay * { pointer-events: none !important; }
+/* End-of-page placeholder, as in Elementor: drop here, or "+" to add. */
+#bd-appender { all: unset; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; margin: 24px; min-height: 160px; padding: 24px; border: 2px dashed rgba(148,163,184,.6); border-radius: 6px; background: rgba(148,163,184,.06); color: rgb(148,163,184); font: italic 400 15px/1.4 system-ui, sans-serif; }
+#bd-appender.bd-appender-over { border-color: #2563eb; background: rgba(37,99,235,.08); }
+#bd-appender .bd-appender-add { all: unset; box-sizing: border-box; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: rgba(148,163,184,.25); color: inherit; cursor: pointer; }
+#bd-appender .bd-appender-add:hover { background: #2563eb; color: #fff; }
+#bd-appender .bd-appender-add:focus-visible, #bd-overlay .bd-tab-button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+#bd-appender .bd-appender-add svg { width: 20px; height: 20px; }
+#bd-appender p { all: unset; }
+/* An empty container shows where to click to add into it. */
+[data-bd-edit] .bd-container:empty::after { content: "+"; display: flex; align-items: center; justify-content: center; width: 100%; min-height: 64px; font: 300 28px/1 system-ui, sans-serif; color: color-mix(in srgb, currentColor 45%, transparent); cursor: pointer; }
 [data-bd-editing] { outline: 2px dashed #2563eb; outline-offset: 2px; cursor: text; }
 /* EmDash's own floating edit toolbar competes with the builder's selection. */
 #emdash-toolbar { display: none !important; }
@@ -97,6 +197,11 @@ export function LiveCanvas({
 	selectedKey,
 	onSelect,
 	onDropPayload,
+	onRequestInsert,
+	onAddContainer,
+	onRemove,
+	onContextMenu,
+	onShortcut,
 	onEditContent,
 	contentBlocks,
 	storedContent,
@@ -110,6 +215,9 @@ export function LiveCanvas({
 	const [failed, setFailed] = React.useState(false);
 	const [loadedAt, setLoadedAt] = React.useState(0);
 	const hoverKey = React.useRef<string | null>(null);
+	// The container whose "×" was clicked once and awaits the confirming click.
+	const confirmKey = React.useRef<string | null>(null);
+	const confirmTimer = React.useRef<number | undefined>(undefined);
 
 	// What each content block currently looks like in the preview, as JSON:
 	// starts as the stored draft on every load, then follows each re-render.
@@ -129,10 +237,32 @@ export function LiveCanvas({
 		onSelect,
 		labelFor,
 		onDropPayload,
+		onRequestInsert,
+		onAddContainer,
+		onRemove,
+		onContextMenu,
+		onShortcut,
 		onEditContent,
 		contentBlocks,
+		strings,
 	});
-	latest.current = { tree, pageCss, missing, selectedKey, onSelect, labelFor, onDropPayload, onEditContent, contentBlocks };
+	latest.current = {
+		tree,
+		pageCss,
+		missing,
+		selectedKey,
+		onSelect,
+		labelFor,
+		onDropPayload,
+		onRequestInsert,
+		onAddContainer,
+		onRemove,
+		onContextMenu,
+		onShortcut,
+		onEditContent,
+		contentBlocks,
+		strings,
+	};
 
 	// The text element being edited in place, if any. While it is active the
 	// block is not re-rendered, so the caret is never lost mid-typing.
@@ -188,6 +318,83 @@ export function LiveCanvas({
 		const scrollX = doc.defaultView?.scrollX ?? 0;
 		const scrollY = doc.defaultView?.scrollY ?? 0;
 
+		const dragHandle = (el: HTMLElement, key: string) => {
+			el.draggable = true;
+			el.addEventListener("dragstart", (event) => {
+				beginDrag({ kind: "existing", nodeKey: key });
+				event.dataTransfer?.setData("text/plain", key);
+				if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+			});
+			el.addEventListener("dragend", () => {
+				endDrag();
+				drawOverlay();
+			});
+		};
+
+		/**
+		 * The hover tab's grip: a drag driven by mouse events, not native drag
+		 * and drop (which does not reliably start from the overlay inside the
+		 * iframe). Same targets and insertion line as a native drop; Esc cancels.
+		 */
+		const pointerHandle = (el: HTMLElement, key: string) => {
+			el.addEventListener("mousedown", (down) => {
+				if (down.button !== 0) return;
+				down.preventDefault();
+				const win = doc.defaultView;
+				const line = doc.getElementById("bd-drop-line");
+				const payload: DragPayload = { kind: "existing", nodeKey: key };
+				let active = false;
+				let target: DropTarget | null = null;
+
+				const finish = (drop: boolean) => {
+					doc.removeEventListener("mousemove", onMove);
+					doc.removeEventListener("mouseup", onUp);
+					doc.removeEventListener("keydown", onKey);
+					doc.documentElement.style.removeProperty("cursor");
+					if (!active) return;
+					// The mouseup's click would select whatever sits under the drop.
+					const swallow = (event: Event) => {
+						event.preventDefault();
+						event.stopPropagation();
+					};
+					win?.addEventListener("click", swallow, { capture: true, once: true });
+					setTimeout(() => win?.removeEventListener("click", swallow, { capture: true }), 0);
+					if (drop && target) latest.current.onDropPayload(payload, target);
+					endDrag();
+				};
+				const onMove = (event: MouseEvent) => {
+					if (!active) {
+						if (Math.hypot(event.clientX - down.clientX, event.clientY - down.clientY) < 4) return;
+						active = true;
+						beginDrag(payload);
+						// Hit tests must see the page, not the overlay.
+						doc.documentElement.setAttribute("data-bd-dragging", "");
+						doc.documentElement.style.cursor = "grabbing";
+					}
+					const at = resolveAt(doc, event.clientX, event.clientY, latest.current.tree);
+					target = at?.target ?? null;
+					if (!line) return;
+					if (!at) {
+						line.style.display = "none";
+						return;
+					}
+					Object.assign(line.style, {
+						display: "block",
+						top: `${at.line.top}px`,
+						left: `${at.line.left}px`,
+						width: `${at.line.width}px`,
+					});
+				};
+				const onUp = () => finish(true);
+				const onKey = (event: KeyboardEvent) => {
+					if (event.key === "Escape") finish(false);
+				};
+				doc.addEventListener("mousemove", onMove);
+				doc.addEventListener("mouseup", onUp);
+				doc.addEventListener("keydown", onKey);
+			});
+		};
+
 		const box = (key: string | null, className: string, badge?: string, handle?: boolean) => {
 			if (!key) return;
 			const wrapper = doc.querySelector(`[data-bd-key="${CSS.escape(key)}"]`);
@@ -208,17 +415,8 @@ export function LiveCanvas({
 				tag.textContent = badge;
 				if (handle && key) {
 					// The badge is the node's drag handle, as in Elementor.
-					tag.draggable = true;
+					dragHandle(tag, key);
 					tag.title = "Drag to move";
-					tag.addEventListener("dragstart", (event) => {
-						beginDrag({ kind: "existing", nodeKey: key });
-						event.dataTransfer?.setData("text/plain", key);
-						if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-					});
-					tag.addEventListener("dragend", () => {
-						endDrag();
-						drawOverlay();
-					});
 				}
 				Object.assign(tag.style, {
 					top: `${Math.max(rect.top + scrollY, 18)}px`,
@@ -232,6 +430,101 @@ export function LiveCanvas({
 		if (hoverKey.current !== selected) box(hoverKey.current, "bd-hover");
 		const selectedNode = selected ? findNode(currentTree, selected) : null;
 		box(selected, "bd-selected", selectedNode ? label(selectedNode) : undefined, true);
+
+		// The hovered container's tab, as in Elementor: "+" makes a new empty
+		// container above it, the grip drags it, "×" removes it. Mouse-only:
+		// the overlay is rebuilt on every move, so it cannot hold focus.
+		const container = hoverKey.current ? containerAround(currentTree, hoverKey.current) : null;
+		if (confirmKey.current && confirmKey.current !== container?.key) confirmKey.current = null;
+		const wrapper = container && doc.querySelector(`[data-bd-key="${CSS.escape(container.key)}"]`);
+		const rect = wrapper && nodeRect(wrapper);
+		if (container && rect) {
+			const { strings: text } = latest.current;
+			const tab = doc.createElement("div");
+			tab.className = "bd-tab";
+			Object.assign(tab.style, {
+				top: `${rect.top + scrollY}px`,
+				left: `${rect.left + scrollX + rect.width / 2}px`,
+			});
+			const button = (name: keyof typeof ICONS, label: string) => {
+				const el = doc.createElement("button");
+				el.type = "button";
+				el.className = "bd-tab-button";
+				el.title = label;
+				el.setAttribute("aria-label", label);
+				el.appendChild(icon(doc, name));
+				tab.appendChild(el);
+				return el;
+			};
+			button("plus", text.addContainer).addEventListener("click", () => {
+				hoverKey.current = null;
+				latest.current.onAddContainer(slotOf(latest.current.tree, container));
+			});
+			const grip = button("grip", text.move);
+			grip.classList.add("bd-tab-grip");
+			pointerHandle(grip, container.key);
+			// "×" asks first: the first click turns it into "Delete?", a second
+			// click removes. Moving to another container or waiting cancels.
+			const close = button("close", text.remove);
+			if (confirmKey.current === container.key) {
+				close.classList.add("bd-tab-confirm");
+				close.title = text.confirmRemove;
+				close.setAttribute("aria-label", text.confirmRemove);
+				close.append(text.confirmRemove);
+			}
+			close.addEventListener("click", () => {
+				window.clearTimeout(confirmTimer.current);
+				if (confirmKey.current !== container.key) {
+					confirmKey.current = container.key;
+					confirmTimer.current = window.setTimeout(() => {
+						confirmKey.current = null;
+						drawOverlay();
+					}, 4000);
+					drawOverlay();
+					return;
+				}
+				confirmKey.current = null;
+				hoverKey.current = null;
+				latest.current.onRemove(container.key);
+			});
+			overlay.appendChild(tab);
+		}
+	}, []);
+
+	/**
+	 * The end-of-page placeholder: kept as the last child of <main> after every
+	 * projection of the tree. Added by the editor only, so the public render
+	 * never has it. Drops on it land at the end of the page (frame-drop resolves
+	 * any non-node target inside <main> to the root's end).
+	 */
+	const ensureAppender = React.useCallback((doc: Document) => {
+		const main = doc.querySelector("main[data-bd-main]");
+		if (!main) return;
+		let appender = doc.getElementById("bd-appender");
+		if (!appender) {
+			const { strings: text } = latest.current;
+			appender = doc.createElement("div");
+			appender.id = "bd-appender";
+			const add = doc.createElement("button");
+			add.type = "button";
+			add.className = "bd-appender-add";
+			add.title = text.add;
+			add.setAttribute("aria-label", text.add);
+			add.appendChild(icon(doc, "plus"));
+			add.addEventListener("click", () => {
+				latest.current.onRequestInsert({ parentKey: null, index: latest.current.tree.length });
+			});
+			const hint = doc.createElement("p");
+			hint.textContent = text.dropHere;
+			appender.append(add, hint);
+			const el = appender;
+			el.addEventListener("dragover", () => el.classList.add("bd-appender-over"));
+			el.addEventListener("dragleave", (event) => {
+				if (!el.contains(event.relatedTarget as Node | null)) el.classList.remove("bd-appender-over");
+			});
+			el.addEventListener("drop", () => el.classList.remove("bd-appender-over"));
+		}
+		if (main.lastElementChild !== appender) main.appendChild(appender);
 	}, []);
 
 	// Wire the iframe document once per load.
@@ -338,11 +631,25 @@ export function LiveCanvas({
 			"click",
 			(event) => {
 				// Editing, not browsing: nothing in the page navigates or submits.
+				// The editor's own chrome (hover tab, placeholder) handles its clicks.
+				if (inChrome(event.target)) return;
 				event.preventDefault();
 				event.stopPropagation();
 				const target = event.target as Element | null;
 				if (inline.current && target && inline.current.el.contains(target)) return;
-				latest.current.onSelect(keyAt(target));
+				const key = keyAt(target);
+				// An empty container's "+": select it and open the elements panel
+				// to add into it.
+				const emptyBox =
+					target && typeof target.matches === "function" && target.matches(".bd-container:empty")
+						? target.getAttribute("data-bd-container")
+						: null;
+				if (emptyBox) {
+					inline.current?.stop();
+					latest.current.onRequestInsert({ parentKey: emptyBox, index: 0 }, emptyBox);
+					return;
+				}
+				latest.current.onSelect(key);
 				// A click on a text field edits it in place, as in Elementor.
 				const hit = target && typeof target.closest === "function" ? fieldAt(target) : null;
 				if (hit) startInline(hit, event.clientX, event.clientY);
@@ -352,6 +659,8 @@ export function LiveCanvas({
 		);
 		doc.addEventListener("submit", (event) => event.preventDefault(), true);
 		doc.addEventListener("mouseover", (event) => {
+			// Reaching the hover tab keeps its container hovered.
+			if (inChrome(event.target)) return;
 			const key = keyAt(event.target);
 			if (key !== hoverKey.current) {
 				hoverKey.current = key;
@@ -364,6 +673,54 @@ export function LiveCanvas({
 		});
 
 		// Shortcuts typed inside the iframe go to the shell.
+		// A point of the iframe, in the admin's viewport.
+		const toAdmin = (x: number, y: number) => {
+			const rect = frame.getBoundingClientRect();
+			return { x: rect.left + x, y: rect.top + y };
+		};
+
+		// Right-click on a node: the element's context menu. Cmd+right-click (the
+		// Mac's Ctrl+click IS a right-click) and text being edited keep the
+		// browser's own menu.
+		doc.addEventListener("contextmenu", (event) => {
+			if (event.metaKey) return;
+			const target = event.target as Element | null;
+			if (inline.current && target && inline.current.el.contains(target)) return;
+			if (inChrome(target)) return;
+			const key = keyAt(target);
+			if (!key) return;
+			event.preventDefault();
+			inline.current?.stop();
+			const at = toAdmin(event.clientX, event.clientY);
+			latest.current.onContextMenu(key, at.x, at.y);
+		});
+
+		// Element shortcuts, decided HERE: the inline edit and the page's text
+		// selection live in this document, not in the shell's.
+		doc.addEventListener("keydown", (event) => {
+			const active = doc.activeElement as HTMLElement | null;
+			const editing =
+				!!inline.current ||
+				!!active?.isContentEditable ||
+				["INPUT", "TEXTAREA", "SELECT"].includes(active?.tagName ?? "");
+			const selected = latest.current.selectedKey;
+			if (!editing && selected && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+				event.preventDefault();
+				const wrapper = doc.querySelector(`[data-bd-key="${CSS.escape(selected)}"]`);
+				const rect = wrapper && nodeRect(wrapper);
+				const at = toAdmin(rect ? rect.left + 8 : 8, rect ? rect.top + 8 : 8);
+				latest.current.onContextMenu(selected, at.x, at.y);
+				return;
+			}
+			const action = elementShortcut(event, editing, win.getSelection());
+			if (action) {
+				if (!selected) return;
+				event.preventDefault();
+				latest.current.onShortcut(action);
+				return;
+			}
+		});
+
 		doc.addEventListener("keydown", (event) => {
 			if (!(event.metaKey || event.ctrlKey)) return;
 			if (!["s", "z", "y"].includes(event.key)) return;
@@ -410,6 +767,7 @@ export function LiveCanvas({
 		win.addEventListener("resize", drawOverlay);
 
 		applyTree(doc, latest.current.tree);
+		ensureAppender(doc);
 		markMissing(doc, latest.current.missing);
 		applyStyles(
 			doc,
@@ -419,15 +777,19 @@ export function LiveCanvas({
 		rendered.current = new Map(storedRef.current.map((block) => [block._key, JSON.stringify(block)]));
 		setFailed(false);
 		setLoadedAt(Date.now());
-	}, [drawOverlay]);
+	}, [drawOverlay, ensureAppender]);
 
 	// A drag that ends anywhere (drop, Esc, outside) hides the insertion line
 	// and lets the selection overlay catch up.
 	const { payload: dragging } = useDragState();
 	React.useEffect(() => {
+		const doc = frameRef.current?.contentDocument;
+		// Mid-drag the canvas chrome lets drops through (see OVERLAY_CSS).
+		doc?.documentElement.toggleAttribute("data-bd-dragging", !!dragging);
 		if (dragging) return;
-		const line = frameRef.current?.contentDocument?.getElementById("bd-drop-line");
+		const line = doc?.getElementById("bd-drop-line");
 		if (line) line.style.display = "none";
+		doc?.getElementById("bd-appender")?.classList.remove("bd-appender-over");
 		drawOverlay();
 	}, [dragging, drawOverlay]);
 
@@ -471,10 +833,11 @@ export function LiveCanvas({
 		const doc = frameRef.current?.contentDocument;
 		if (!doc || !loadedAt) return;
 		applyTree(doc, tree);
+		ensureAppender(doc);
 		markMissing(doc, missing);
 		applyStyles(doc, generateCss(tree, { edit: true }) + pageCssText(pageCss));
 		drawOverlay();
-	}, [tree, pageCss, missing, loadedAt, drawOverlay]);
+	}, [tree, pageCss, missing, loadedAt, drawOverlay, ensureAppender]);
 
 	React.useEffect(() => {
 		drawOverlay();

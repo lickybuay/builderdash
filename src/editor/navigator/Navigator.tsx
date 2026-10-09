@@ -38,6 +38,11 @@ interface NavigatorProps {
 	labelFor?: (node: BuilderNode) => string | undefined;
 	/** Renames a node (double-click on its label). Empty restores the default. */
 	onRename?: (key: string, name: string) => void;
+	/**
+	 * Opens the element's context menu at a viewport point (right-click on a
+	 * row, or the Menu key / Shift+F10 on the focused one).
+	 */
+	onContextMenu?: (key: string, x: number, y: number, returnFocus: HTMLElement) => void;
 	/** Spread on the header: it moves the floating panel. */
 	headerProps?: React.HTMLAttributes<HTMLElement>;
 	/** Minimized: only the header and its tools are shown. */
@@ -92,6 +97,7 @@ export function Navigator({
 	onClose,
 	labelFor,
 	onRename,
+	onContextMenu,
 	headerProps,
 	minimized = false,
 	onToggleMinimized,
@@ -208,6 +214,15 @@ export function Navigator({
 			return;
 		}
 
+		if (key === "ContextMenu" || (event.shiftKey && key === "F10")) {
+			event.preventDefault();
+			const target = event.currentTarget as HTMLElement;
+			const rect = target.getBoundingClientRect();
+			choose(row.node.key);
+			onContextMenu?.(row.node.key, rect.left + 24, rect.bottom, target);
+			return;
+		}
+
 		if (key === "ArrowDown" || key === "ArrowUp") {
 			event.preventDefault();
 			const next = rows[at + (key === "ArrowDown" ? 1 : -1)];
@@ -319,6 +334,7 @@ export function Navigator({
 							onKeyDown={handleKeyDown}
 							label={labelOf(row.node)}
 							onRename={onRename}
+							onContextMenu={onContextMenu}
 						/>
 					))}
 				</div>
@@ -342,6 +358,7 @@ interface NavigatorRowProps {
 	onKeyDown: (event: React.KeyboardEvent, row: VisibleRow, at: number) => void;
 	label?: string;
 	onRename?: (key: string, name: string) => void;
+	onContextMenu?: (key: string, x: number, y: number, returnFocus: HTMLElement) => void;
 }
 
 function NavigatorRow({
@@ -357,6 +374,7 @@ function NavigatorRow({
 	onKeyDown,
 	label,
 	onRename,
+	onContextMenu,
 }: NavigatorRowProps): React.JSX.Element {
 	const { i18n } = useLingui();
 	const { node, depth, hasChildren, expanded } = row;
@@ -381,6 +399,13 @@ function NavigatorRow({
 			onClick={() => onSelect(node.key)}
 			onFocus={() => onFocus(node.key)}
 			onKeyDown={(event) => onKeyDown(event, row, position)}
+			onContextMenu={(event) => {
+				// Renaming: the text field keeps the browser's own menu.
+				if (renaming || !onContextMenu) return;
+				event.preventDefault();
+				onSelect(node.key);
+				onContextMenu(node.key, event.clientX, event.clientY, event.currentTarget);
+			}}
 			{...(renaming ? {} : dragProps)}
 			{...drop.rowProps(node.key, expanded)}
 			style={{ paddingInlineStart: `${8 + depth * 16}px` }}
