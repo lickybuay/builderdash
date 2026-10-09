@@ -57,7 +57,7 @@ pnpm or npm are the quickest way to try it.
 
 The package ships built: installing it runs no build script, so pnpm's build-script allowlist needs no entry for it.
 
-`builderdash-setup` (`install.sh`) registers the plugin in `astro.config.*`, adds the builder fields and block type to your seed, and validates it with the EmDash CLI. On a site without a seed (the `blank` template) it creates `seed/seed.json` with a `pages` collection. It is idempotent and backs up every file it changes as `<file>.builderdash.bak`.
+`builderdash-setup` (`install.sh`) registers the plugin and its `builderdash()` integration in `astro.config.*`, adds the builder fields and block type to your seed, and validates it with the EmDash CLI. On a site without a seed (the `blank` template) it creates `seed/seed.json` with a `pages` collection. It is idempotent and backs up every file it changes as `<file>.builderdash.bak`.
 
 Options:
 
@@ -78,10 +78,11 @@ Install the package (`pnpm add github:lickybuay/builderdash`, `npm install githu
 
 ```js
 // astro.config.mjs
-import { builderdashPlugin } from "@lickybuay/builderdash";
+import { builderdash, builderdashPlugin } from "@lickybuay/builderdash";
 
 export default defineConfig({
 	integrations: [
+		builderdash(),
 		react(),
 		emdash({
 			// ...database, storage
@@ -90,6 +91,10 @@ export default defineConfig({
 	],
 });
 ```
+
+`builderdash()` makes the builder share EmDash's admin libraries (Lingui, React Query,
+kumo). Without it the builder fails with "useLingui hook was used without
+I18nProvider" and the content list shows "Plugin column unavailable".
 
 ### 2. Add the builder fields to `seed/seed.json`
 

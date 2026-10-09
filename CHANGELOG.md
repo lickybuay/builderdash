@@ -25,3 +25,5 @@ First public alpha.
 - Templates: blank canvas on "Add New", template parts, live template references.
 - Site content blocks (Hero, FAQ, Pricing…) next to the builder's own widgets.
 - `builderdash-setup` installer for the plugin registration and the seed fields.
+- `builderdash()` Astro integration, so the builder shares EmDash's admin libraries
+  when installed as a package.

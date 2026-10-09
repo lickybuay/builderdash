@@ -141,8 +141,38 @@ const pkg = process.env.PACKAGE;
 const call = "builderdashPlugin()";
 let src = fs.readFileSync(file, "utf8");
 
+// The Astro integration makes the builder share the admin's libraries (one
+// Lingui / React Query instance); a site registered before it existed gets it
+// added here too.
+const addIntegration = (text) => {
+	if (/\bbuilderdash\(\)/.test(text)) return text;
+	const integrations = /integrations\s*:\s*\[/.exec(text);
+	if (!integrations) {
+		console.error(`  Could not find integrations: [ ... ] in ${file}. Add builderdash() to it (see the README).`);
+		return text;
+	}
+	const at = integrations.index + integrations[0].length;
+	const rest = text.slice(at);
+	if (/^\s*\]/.test(rest)) return text.slice(0, at) + "builderdash()" + rest;
+	// One entry per line: match the indent of the first existing entry.
+	const multiline = /^\n([ \t]*)/.exec(rest);
+	return multiline
+		? text.slice(0, at) + `\n${multiline[1]}builderdash(),` + rest
+		: text.slice(0, at) + "builderdash(), " + rest;
+};
+
 if (/\bbuilderdashPlugin\b/.test(src)) {
-	console.log("  already registered, nothing to do.");
+	const next = addIntegration(src).replace(
+		/import\s*\{\s*builderdashPlugin\s*\}\s*from\s*(["'])@lickybuay\/builderdash\1/,
+		`import { builderdash, builderdashPlugin } from "${pkg}"`,
+	);
+	if (next === src) {
+		console.log("  already registered, nothing to do.");
+		process.exit(0);
+	}
+	fs.copyFileSync(file, `${file}.builderdash.bak`);
+	fs.writeFileSync(file, next);
+	console.log("  added the builderdash() integration.");
 	process.exit(0);
 }
 
@@ -188,9 +218,11 @@ if (plugins) {
 	src = src.slice(0, open + 1) + `\n${indent}plugins: [${call}],` + src.slice(open + 1);
 }
 
+src = addIntegration(src);
+
 // Import after the last top-level import statement.
 const imports = [...src.matchAll(/^import\b[\s\S]*?;[ \t]*$/gm)];
-const line = `import { builderdashPlugin } from "${pkg}";\n`;
+const line = `import { builderdash, builderdashPlugin } from "${pkg}";\n`;
 if (imports.length > 0) {
 	const last = imports[imports.length - 1];
 	const at = last.index + last[0].length + 1;
