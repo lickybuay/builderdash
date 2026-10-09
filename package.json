@@ -19,6 +19,10 @@
 			"types": "./dist/index.d.mts",
 			"import": "./dist/index.mjs"
 		},
+		"./seed": {
+			"types": "./seed/seed.d.mts",
+			"import": "./seed/seed.mjs"
+		},
 		"./admin": "./src/editor/index.tsx",
 		"./astro": "./src/render/index.ts",
 		"./BuilderLayout.astro": "./src/render/BuilderLayout.astro",
@@ -32,6 +36,7 @@
 	},
 	"files": [
 		"dist",
+		"seed",
 		"src",
 		"!src/**/*.test.ts",
 		"!src/**/*.test.tsx",
@@ -42,7 +47,7 @@
 		"templates"
 	],
 	"scripts": {
-		"build": "tsdown src/index.ts --format esm --dts --clean",
+		"build": "tsdown src/index.ts --format esm --dts --clean && tsdown src/schema/seed.ts --format esm --dts --clean --out-dir seed",
 		"dev": "tsdown src/index.ts --format esm --dts --watch",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",

@@ -246,60 +246,24 @@ else
 fi
 TOUCHED_FILE="$(mktemp)"
 trap 'rm -f "$TOUCHED_FILE"' EXIT
-SEED="$SEED" SEED_CREATED="$SEED_CREATED" COLLECTIONS="$COLLECTIONS" TOUCHED_FILE="$TOUCHED_FILE" node <<'NODE'
+# The schema ships next to this script (resolved through the bin link).
+PLUGIN_DIR="$(dirname "$(node -e 'console.log(require("node:fs").realpathSync(process.argv[1]))' "$0")")"
+SCHEMA_JSON="$(PLUGIN_DIR="$PLUGIN_DIR" node --input-type=module -e '
+	const { pathToFileURL } = await import("node:url");
+	const { builderSeedSchema } = await import(pathToFileURL(process.env.PLUGIN_DIR + "/seed/seed.mjs").href);
+	console.log(JSON.stringify(builderSeedSchema()));
+')" || fail "Could not read the builder schema from $PLUGIN_DIR/seed/seed.mjs."
+SCHEMA_JSON="$SCHEMA_JSON" SEED="$SEED" SEED_CREATED="$SEED_CREATED" COLLECTIONS="$COLLECTIONS" TOUCHED_FILE="$TOUCHED_FILE" node <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const file = process.env.SEED;
 const created = process.env.SEED_CREATED === "1";
 const wanted = process.env.COLLECTIONS.split(",").map((s) => s.trim()).filter(Boolean);
 
-const fields = [
-	{
-		slug: "builder_layout",
-		label: "Builder layout",
-		type: "blocks",
-		validation: { allowedTypes: ["builder_container", "builder_content_ref"], maxItems: 100 },
-	},
-	{ slug: "builder_styles", label: "Builder styles", type: "json" },
-];
-
-const parentField = { slug: "parent_key", label: "Parent", type: "string", validation: { maxLength: 32 } };
-
-const blockTypes = [{
-	slug: "builder_container",
-	label: "Container",
-	description: "A layout container nested by the Builderdash page builder",
-	category: "Builder",
-	currentVersion: 1,
-	versions: [
-		{
-			version: 1,
-			fields: [
-				{ slug: "gap", label: "Gap", type: "select", defaultValue: "md",
-					validation: { options: ["none", "sm", "md", "lg"] } },
-				{ slug: "direction", label: "Direction", type: "select", defaultValue: "column",
-					validation: { options: ["column", "row"] } },
-				parentField,
-			],
-		},
-	],
-}, {
-	// Places one of the entry's existing content blocks in the layout.
-	slug: "builder_content_ref",
-	label: "Content block",
-	description: "Places one of the entry's content blocks in the Builderdash layout",
-	category: "Builder",
-	currentVersion: 1,
-	versions: [
-		{
-			version: 1,
-			fields: [
-				{ slug: "ref_key", label: "Content block", type: "string", validation: { maxLength: 64 } },
-				parentField,
-			],
-		},
-	],
-}];
+// Generated from the plugin's widget registry (seed/seed.mjs): every
+// widget the builder offers must be a block type here, or saving it fails
+// with "block type … is unavailable".
+const { fields, blockTypes } = JSON.parse(process.env.SCHEMA_JSON);
 
 let raw = "";
 let seed;
@@ -363,9 +327,22 @@ for (const slug of targets) {
 
 seed.blockTypes = seed.blockTypes || [];
 for (const blockType of blockTypes) {
-	if (seed.blockTypes.some((b) => b.slug === blockType.slug)) continue;
-	seed.blockTypes.push(blockType);
-	changed++;
+	const existing = seed.blockTypes.find((b) => b.slug === blockType.slug);
+	if (!existing) {
+		seed.blockTypes.push(blockType);
+		changed++;
+		continue;
+	}
+	// An older install's block type may lack fields a newer widget declares
+	// (a container's background color…): add them to its current version.
+	const version = (existing.versions || []).find((v) => v.version === existing.currentVersion);
+	if (!version) continue;
+	version.fields = version.fields || [];
+	for (const field of blockType.versions[0].fields) {
+		if (version.fields.some((f) => f.slug === field.slug)) continue;
+		version.fields.push(field);
+		changed++;
+	}
 }
 
 fs.writeFileSync(process.env.TOUCHED_FILE, targets.join(", "));

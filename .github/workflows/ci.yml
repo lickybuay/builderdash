@@ -25,10 +25,10 @@ jobs:
       - run: pnpm test
       # The package ships dist/: it must be exactly what the sources build.
       - run: pnpm build
-      - name: dist/ is up to date
+      - name: dist/ and seed/ are up to date
         run: |
-          if [ -n "$(git status --porcelain dist)" ]; then
-            git status --porcelain dist
-            echo "::error::dist/ is out of date. Run 'pnpm build' and commit the result."
+          if [ -n "$(git status --porcelain dist seed)" ]; then
+            git status --porcelain dist seed
+            echo "::error::dist/ or seed/ is out of date. Run 'pnpm build' and commit the result."
             exit 1
           fi

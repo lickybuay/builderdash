@@ -17,6 +17,10 @@ may change between minor versions.
 
 ### Fixed
 
+- `builderdash-setup` declared only the container and content-block types, so a
+  fresh site could not save headings, text, images, buttons, dividers or
+  templates. The seed schema is now generated from the widget registry
+  (`@lickybuay/builderdash/seed`).
 - A template embedding itself (directly or through another) no longer loops the
   page render; nesting and expansions per page are capped.
 - A template inside a container now renders; the canvas no longer hides an
